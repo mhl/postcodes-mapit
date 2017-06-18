@@ -5,7 +5,8 @@ from mapit_settings import *  # noqa
 # Update a couple of things to suit our changes
 
 # Insert our project app before mapit so that the templates take precedence
-INSTALLED_APPS.insert(INSTALLED_APPS.index('mapit'), 'mapit_postcodes')
+INSTALLED_APPS.insert(INSTALLED_APPS.index('mapit'), 'mapit_gb')
+INSTALLED_APPS.insert(INSTALLED_APPS.index('mapit_gb'), 'mapit_postcodes')
 ROOT_URLCONF = 'mapit_postcodes.urls'
 WSGI_APPLICATION = 'mapit_postcodes.wsgi.application'
 
