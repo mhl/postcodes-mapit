@@ -1,5 +1,5 @@
+import json
 import os
-import yaml
 from project.utils import skip_unreadable_post
 
 # Path to here is something like
@@ -8,15 +8,8 @@ PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 BASE_DIR = os.path.dirname(PROJECT_DIR)
 PARENT_DIR = os.path.dirname(BASE_DIR)
 
-# The mySociety deployment system works by having a conf directory at the root
-# of the repo, containing a general.yml file of options. Use that file if
-# present. Obviously you can just edit any part of this file, it is a normal
-# Django settings.py file.
-try:
-    with open(os.path.join(BASE_DIR, 'conf', 'general.yml'), 'r') as fp:
-        config = yaml.load(fp)
-except:
-    config = {}
+with open(os.path.join(os.path.expanduser('~'), '.mapit')) as f:
+    config = json.load(f)
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
 # WGS84. Optional, defaults to 4326.
