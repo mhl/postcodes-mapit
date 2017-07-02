@@ -15,7 +15,7 @@ WSGI_APPLICATION = 'mapit_postcodes.wsgi.application'
 
 TIME_ZONE = 'Europe/London'
 LANGUAGE_CODE = 'en'
-POSTCODES_AVAILABLE = PARTIAL_POSTCODES_AVAILABLE = False
+POSTCODES_AVAILABLE = PARTIAL_POSTCODES_AVAILABLE = True
 
 STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
 
