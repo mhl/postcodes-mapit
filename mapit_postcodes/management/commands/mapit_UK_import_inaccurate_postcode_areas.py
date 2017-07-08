@@ -64,6 +64,8 @@ class Command(LabelCommand):
                     postcode = m.group(1)
                     if last_imported is not None and postcode <= last_imported:
                         continue
+                    if postcode.startswith('point-'):
+                        continue
                     print("doing postcode:", postcode)
 
                     full_filename = os.path.join(root, filename)
