@@ -8,6 +8,7 @@ from mapit_settings import *  # noqa
 INSTALLED_APPS.insert(INSTALLED_APPS.index('mapit'), 'mapit_gb')
 INSTALLED_APPS.insert(INSTALLED_APPS.index('mapit_gb'), 'mapit_postcodes')
 INSTALLED_APPS.append('debug_toolbar')
+INSTALLED_APPS.append('django_extensions')
 ROOT_URLCONF = 'mapit_postcodes.urls'
 WSGI_APPLICATION = 'mapit_postcodes.wsgi.application'
 
