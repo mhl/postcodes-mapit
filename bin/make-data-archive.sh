@@ -31,7 +31,7 @@ This archive contains very approximate boundaries for postcodes in the
 UK. For more information about how these were generated, see the blog
 post here:
 
-  http://longair.net/blog/2017/06/20/approximate-postcode-boundaries/
+  https://longair.net/blog/2017/07/10/approximate-postcode-boundaries/
 
 This archive contains KML files for postcode areas, districts, sectors
 and units. Under the postcodes subdirectory, which contains the

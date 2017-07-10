@@ -7,7 +7,7 @@ postcode centroids in ONSPD.
 
 For more information see the blog post here:
 
-* https://longair.net/blog/2017/06/20/approximate-postcode-boundaries/
+* https://longair.net/blog/2017/07/10/approximate-postcode-boundaries/
 
 If you're looking to create a MapIt in your country, work on any
 of the underlying code, or re-use it as an app in another Django
