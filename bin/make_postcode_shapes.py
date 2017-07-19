@@ -146,21 +146,17 @@ if __name__ == '__main__':
 
     # Now load the centroids of (almost) all the postcodes:
 
-    lon_sum = 0
-    lat_sum = 0
+    e_sum = 0
+    n_sum = 0
 
-    lon_min = sys.maxint
-    lat_min = sys.maxint
+    e_min = sys.maxint
+    n_min = sys.maxint
 
-    lon_max = -sys.maxint - 1
-    lat_max = -sys.maxint - 1
+    e_max = -sys.maxint - 1
+    n_max = -sys.maxint - 1
 
     x = []
     y = []
-
-
-    lon_max_row = None
-    lat_min_row = None
 
     position_to_postcodes = defaultdict(set)
     wgs84_postcode_and_points = []
@@ -172,7 +168,7 @@ if __name__ == '__main__':
         for i, row in enumerate(reader):
             if i > 0 and (i % 1000 == 0):
                 print("{0} postcodes processed".format(i))
-            pc = row['pcd']
+            pc = row['pcds']
             if required_pc_prefix and not pc.startswith(required_pc_prefix):
                 continue
             # Exclude terminated postcodes:
@@ -184,33 +180,24 @@ if __name__ == '__main__':
             m = postcode_matcher.search(pc)
             if not m:
                 raise Exception, "Couldn't parse postcode:" + pc
-            # Normalize the postcode's format to put a space in the
-            # right place:
-            pc = m.group(1) + " " + m.group(3)
-            if row['long'] == '0.000000' and row['lat'] == '99.999999':
-                # The ONSPD User Guide May 2017 says that these values
-                # indicate: "postcodes in the Channel Islands and the Isle
-                # of Man, and [..] postcodes with no grid reference"
+            if row['oseast1m'] == '' and row['osnrth1m'] == '':
                 continue
-            # Transform into the OS eastings and northings before
-            # calculating the Voronoi diagram.
             wgs84_point = Point(float(row['long']), float(row['lat']), srid=4326)
             if args.postcode_points:
                 wgs84_postcode_and_points.append((pc, wgs84_point))
-            osgb_point = wgs84_point.transform(27700, clone=True)
-            lon = osgb_point.x
-            lat = osgb_point.y
-            lon_min = min(lon_min, lon)
-            lat_min = min(lat_min, lat)
-            lon_max = max(lon_max, lon)
-            lat_max = max(lat_max, lat)
-            position_tuple = (lon, lat)
+            e = float(row['oseast1m'])
+            n = float(row['osnrth1m'])
+            e_min = min(e_min, e)
+            n_min = min(n_min, n)
+            e_max = max(e_max, e)
+            n_max = max(n_max, n)
+            position_tuple = (e, n)
             position_to_postcodes[position_tuple].add(pc)
             if len(position_to_postcodes[position_tuple]) == 1:
-                x.append(lon)
-                y.append(lat)
-                lon_sum += lon
-                lat_sum += lat
+                x.append(e)
+                y.append(n)
+                e_sum += e
+                n_sum += n
             total_postcodes += 1
 
     if total_postcodes == 0 and required_pc_prefix:
@@ -218,15 +205,15 @@ if __name__ == '__main__':
             required_pc_prefix))
         sys.exit(1)
 
-    centroid_x = lon_sum / float(len(x))
-    centroid_y = lat_sum / float(len(y))
+    centroid_x = e_sum / float(len(x))
+    centroid_y = n_sum / float(len(y))
 
     # Now add some "points at infinity" - 200 points in a circle way
     # outside the border of the United Kingdom:
 
     points_at_infinity = 200
 
-    distance_to_infinity = (lat_max - lat_min) * 2
+    distance_to_infinity = (e_max - e_min) * 2
 
     first_infinity_point_index = len(x)
 
