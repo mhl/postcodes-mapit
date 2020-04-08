@@ -9,8 +9,22 @@ PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 BASE_DIR = os.path.dirname(PROJECT_DIR)
 PARENT_DIR = os.path.dirname(BASE_DIR)
 
-with open(os.path.join(os.path.expanduser('~'), '.mapit')) as f:
-    config = json.load(f)
+try:
+    with open(os.path.join(os.path.expanduser('~'), '.mapit')) as f:
+        config = json.load(f)
+except FileNotFoundError:
+    config = {
+        k: os.environ.get(k)
+        for k in [
+                "DJANGO_SECRET_KEY",
+                "MAPIT_DB_NAME",
+                "MAPIT_DB_USER",
+                "MAPIT_DB_PASS",
+                "MAPIT_DB_HOST",
+                "MAPIT_DB_PORT",
+                "COUNTRY",
+        ]
+    }
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
 # WGS84. Optional, defaults to 4326.
