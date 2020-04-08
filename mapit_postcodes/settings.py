@@ -1,6 +1,6 @@
 # Import MapIt's settings (first time to quiet flake8)
-from mapit_settings import INSTALLED_APPS
-from mapit_settings import *  # noqa
+from .mapit_settings import INSTALLED_APPS
+from .mapit_settings import *  # noqa
 
 # Update a couple of things to suit our changes
 

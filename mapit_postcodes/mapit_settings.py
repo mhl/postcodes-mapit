@@ -1,6 +1,7 @@
 import json
 import os
-from project.utils import skip_unreadable_post
+
+from django.http import UnreadablePostError
 
 # Path to here is something like
 # .../<repo>/<project_name>/settings.py
@@ -160,14 +161,13 @@ STATICFILES_FINDERS = (
 # similar ETag code in CommonMiddleware.
 USE_ETAGS = False
 
-MIDDLEWARE_CLASSES = [
+MIDDLEWARE = [
     'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.middleware.http.ConditionalGetMiddleware',
     'django.middleware.cache.UpdateCacheMiddleware',
     'django.middleware.common.CommonMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django.contrib.auth.middleware.SessionAuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.cache.FetchFromCacheMiddleware',
     'mapit.middleware.JSONPMiddleware',
@@ -218,6 +218,16 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'mapit',
 ]
+
+# This is taken from the Django documentation:
+#   https://docs.djangoproject.com/en/1.9/topics/logging/#django.utils.log.CallbackFilter
+
+def skip_unreadable_post(record):
+    if record.exc_info:
+        exc_type, exc_value = record.exc_info[:2]
+        if isinstance(exc_value, UnreadablePostError):
+            return False
+    return True
 
 LOGGING = {
     'version': 1,
