@@ -13,18 +13,24 @@ try:
     with open(os.path.join(os.path.expanduser('~'), '.mapit')) as f:
         config = json.load(f)
 except FileNotFoundError:
+    # Then assume we're on Heroku, and need to get the database
+    # details from the DATABASE_URL environment variable, and other
+    # configuration from other environment variables.
+    import dj_database_url
+    parsed_database_url = dj_database_url.config()
     config = {
-        k: os.environ.get(k)
+        "MAPIT_DB_" + k: parsed_database_url.get(k)
         for k in [
-                "DJANGO_SECRET_KEY",
-                "MAPIT_DB_NAME",
-                "MAPIT_DB_USER",
-                "MAPIT_DB_PASS",
-                "MAPIT_DB_HOST",
-                "MAPIT_DB_PORT",
+                "NAME",
+                "USER",
+                "HOST",
+                "PORT",
                 "COUNTRY",
         ]
     }
+    config["MAPIT_DB_PASS"] = parsed_database_url["PASSWORD"]
+    config["DJANGO_SECRET_KEY"] = os.environ["DJANGO_SECRET_KEY"]
+    config["COUNTRY"] = "GB"
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
 # WGS84. Optional, defaults to 4326.
@@ -86,6 +92,7 @@ DATABASES = {
         'PASSWORD': config.get('MAPIT_DB_PASS', ''),
         'HOST': config.get('MAPIT_DB_HOST', ''),
         'PORT': config.get('MAPIT_DB_PORT', ''),
+        'CONN_MAX_AGE': 600,
     }
 }
 
