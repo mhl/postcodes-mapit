@@ -45,6 +45,8 @@ except FileNotFoundError:
     STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
     STATIC_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.eu-west-2.s3.amazonaws.com/'
     AWS_QUERYSTRING_AUTH = False
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SECURE_SSL_REDIRECT = True
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
 # WGS84. Optional, defaults to 4326.
@@ -193,6 +195,7 @@ STATICFILES_FINDERS = (
 USE_ETAGS = False
 
 MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
     'debug_toolbar.middleware.DebugToolbarMiddleware',
     'django.middleware.http.ConditionalGetMiddleware',
     'django.middleware.cache.UpdateCacheMiddleware',
