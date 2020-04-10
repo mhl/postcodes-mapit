@@ -12,6 +12,8 @@ PARENT_DIR = os.path.dirname(BASE_DIR)
 try:
     with open(os.path.join(os.path.expanduser('~'), '.mapit')) as f:
         config = json.load(f)
+    STATIC_URL = '/static/'
+    STATICFILES_STORAGE = 'django.contrib.staticfiles.storage.ManifestStaticFilesStorage'
 except FileNotFoundError:
     # Then assume we're on Heroku, and need to get the database
     # details from the DATABASE_URL environment variable, and other
@@ -36,6 +38,13 @@ except FileNotFoundError:
     config["MAPIT_RATE_LIMIT"] = {}
     config["BUGS_EMAIL"] = os.environ["BUGS_EMAIL"]
     config["COUNTRY"] = "GB"
+    AWS_DEFAULT_ACL = "public-read"
+    AWS_STORAGE_BUCKET_NAME = os.environ["AWS_STORAGE_BUCKET_NAME"]
+    AWS_ACCESS_KEY_ID = os.environ["AWS_ACCESS_KEY_ID"]
+    AWS_SECRET_ACCESS_KEY = os.environ["AWS_SECRET_ACCESS_KEY"]
+    STATICFILES_STORAGE = 'storages.backends.s3boto3.S3Boto3Storage'
+    STATIC_URL = f'https://{AWS_STORAGE_BUCKET_NAME}.eu-west-2.s3.amazonaws.com/'
+    AWS_QUERYSTRING_AUTH = False
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
 # WGS84. Optional, defaults to 4326.
@@ -161,10 +170,6 @@ MEDIA_URL = ''
 # in apps' "static/" subdirectories and in STATICFILES_DIRS.
 # Example: "/var/www/example.com/static/"
 STATIC_ROOT = os.path.join(BASE_DIR, '.static')
-
-# URL prefix for static files.
-# Example: "http://example.com/static/", "http://static.example.com/"
-STATIC_URL = '/static/'
 
 # Additional locations of static files
 STATICFILES_DIRS = (
