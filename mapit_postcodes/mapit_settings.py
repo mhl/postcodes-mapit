@@ -31,6 +31,10 @@ except FileNotFoundError:
     config["MAPIT_DB_PASS"] = parsed_database_url["PASSWORD"]
     config["DJANGO_SECRET_KEY"] = os.environ["DJANGO_SECRET_KEY"]
     config["DEBUG"] = bool(os.environ.get("DEBUG"))
+    config["ALLOWED_HOSTS"] = ["postcodes.mapit.longair.net", "postcodes-mapit.herokuapp.com"]
+    config["EMAIL_SUBJECT_PREFIX"] = "[Postcodes MapIt] "
+    config["MAPIT_RATE_LIMIT"] = {}
+    config["BUGS_EMAIL"] = os.environ["BUGS_EMAIL"]
     config["COUNTRY"] = "GB"
 
 # An EPSG code for what the areas are stored as, e.g. 27700 is OSGB, 4326 for
