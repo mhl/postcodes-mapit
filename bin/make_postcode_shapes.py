@@ -1,6 +1,4 @@
-#!/usr/bin/env python
-
-from __future__ import print_function, unicode_literals
+#!/usr/bin/env python3
 
 # In addition to MapIt's dependencies, you'll need a few other
 # packages for this:
@@ -106,13 +104,13 @@ if __name__ == '__main__':
     uk_ds = DataSource(args.uk_boundary_filename)
 
     if len(uk_ds) != 1:
-        raise Exception, "Expected the UK border to only have one layer"
+        raise Exception("Expected the UK border to only have one layer")
 
     uk_layer = next(iter(uk_ds))
     uk_geometries = uk_layer.get_geoms(geos=True)
 
     if len(uk_geometries) != 1:
-        raise Exception, "Expected the UK layer to only have one MultiPolygon"
+        raise Exception("Expected the UK layer to only have one MultiPolygon")
 
     uk_multipolygon = uk_geometries[0]
 
@@ -183,7 +181,7 @@ if __name__ == '__main__':
                 continue
             m = postcode_matcher.search(pc)
             if not m:
-                raise Exception, "Couldn't parse postcode:" + pc
+                raise Exception("Couldn't parse postcode:" + pc)
             # Normalize the postcode's format to put a space in the
             # right place:
             pc = m.group(1) + " " + m.group(3)
@@ -343,7 +341,7 @@ if __name__ == '__main__':
                         clipped_polygon = wgs_84_polygon.intersection(uk_multipolygon)
                     else:
                         clipped_polygon = wgs_84_polygon
-                except Exception, e:
+                except Exception as e:
                     tqdm.write("Got exception when generating:", kml_filename)
                     tqdm.write("The exception was:", e)
                     tqdm.write("The polygon's KML was:", wgs_84_polygon.kml)
