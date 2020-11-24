@@ -67,7 +67,7 @@ def output_boundary_kml(filename, edge, postcodes, polygon):
         'Data',
         attrib={'name': 'edge'})
     value = etree.SubElement(data, 'value')
-    value.text = unicode(edge)
+    value.text = str(edge)
     for i, postcode in enumerate(postcodes):
         data = etree.SubElement(
             extended_data,
@@ -76,7 +76,7 @@ def output_boundary_kml(filename, edge, postcodes, polygon):
         value = etree.SubElement(data, 'value')
         value.text = postcode
     placemark.append(etree.fromstring(polygon.kml))
-    with open(filename, 'w') as f:
+    with open(filename, 'wb') as f:
         f.write(etree.tostring(
             kml, pretty_print=True, encoding='utf-8', xml_declaration=True))
 
@@ -147,11 +147,11 @@ if __name__ == '__main__':
     lon_sum = 0
     lat_sum = 0
 
-    lon_min = sys.maxint
-    lat_min = sys.maxint
+    lon_min = sys.maxsize
+    lat_min = sys.maxsize
 
-    lon_max = -sys.maxint - 1
-    lat_max = -sys.maxint - 1
+    lon_max = -sys.maxsize - 1
+    lat_max = -sys.maxsize - 1
 
     x = []
     y = []
@@ -298,21 +298,12 @@ if __name__ == '__main__':
 
             circumcentres = [ccs[i] for i in triangle_indices]
 
-            def compare_points(a, b):
-                ax = a[0] - centre_x
-                ay = a[1] - centre_y
-                bx = b[0] - centre_x
-                by = b[1] - centre_y
-                angle_a = math.atan2(ay, ax)
-                angle_b = math.atan2(by, bx)
-                result = angle_b - angle_a
-                if result > 0:
-                    return 1
-                elif result < 0:
-                    return -1
-                return 0
+            def angle_from_centre(p):
+                dx = p[0] - centre_x
+                dy = p[1] - centre_y
+                return math.atan2(dy, dx)
 
-            sccs = np.array(sorted(circumcentres, cmp=compare_points))
+            sccs = np.array(sorted(circumcentres, key=angle_from_centre))
             xs = [cc[0] for cc in sccs]
             ys = [cc[1] for cc in sccs]
 
