@@ -26,6 +26,10 @@ from tqdm import tqdm
 
 from mapit.management.command_utils import fix_invalid_geos_geometry
 
+COLUMN_POSTCODE = "pcds"
+COLUMN_E = "gridgb1e"
+COLUMN_N = "gridgb1n"
+
 
 def mkdir_p(path):
     try:
@@ -170,34 +174,26 @@ if __name__ == '__main__':
         for i, row in enumerate(reader):
             if i > 0 and (i % 1000 == 0):
                 print("{0} postcodes processed".format(i))
-            pc = row['pcd']
+            pc = row[COLUMN_POSTCODE]
             if required_pc_prefix and not pc.startswith(required_pc_prefix):
-                continue
-            # Exclude terminated postcodes:
-            if row['doterm']:
                 continue
             # Exclude Girobank postcodes:
             if pc.startswith('GIR'):
                 continue
+            # Exclude rows where the postcode is missing:
+            if not pc:
+                continue
             m = postcode_matcher.search(pc)
             if not m:
-                raise Exception("Couldn't parse postcode:" + pc)
+                raise Exception("Couldn't parse postcode:" + pc + "from row" + str(row))
             # Normalize the postcode's format to put a space in the
             # right place:
             pc = m.group(1) + " " + m.group(3)
-            if row['long'] == '0.000000' and row['lat'] == '99.999999':
-                # The ONSPD User Guide May 2017 says that these values
-                # indicate: "postcodes in the Channel Islands and the Isle
-                # of Man, and [..] postcodes with no grid reference"
-                continue
-            # Transform into the OS eastings and northings before
-            # calculating the Voronoi diagram.
-            wgs84_point = Point(float(row['long']), float(row['lat']), srid=4326)
-            if args.postcode_points:
-                wgs84_postcode_and_points.append((pc, wgs84_point))
-            osgb_point = wgs84_point.transform(27700, clone=True)
-            lon = osgb_point.x
-            lat = osgb_point.y
+            # Remove commas from the eastings and northings
+            row[COLUMN_E] = re.sub(r',', '', row[COLUMN_E])
+            row[COLUMN_N] = re.sub(r',', '', row[COLUMN_N])
+            lon = int(re.sub(r',', '', row[COLUMN_E]))
+            lat = int(re.sub(r',', '', row[COLUMN_N]))
             lon_min = min(lon_min, lon)
             lat_min = min(lat_min, lat)
             lon_max = max(lon_max, lon)
@@ -259,6 +255,8 @@ if __name__ == '__main__':
         for point_index in triangle:
             point_to_triangles[point_index].append(i)
 
+    polygon_count_per_postcode = defaultdict(int)
+
     # Now generate the KML output:
 
     print("Now generating KML output")
@@ -285,7 +283,9 @@ if __name__ == '__main__':
 
         mkdir_p(join(postcodes_output_directory, outcode))
 
-        leafname = file_basename + ".kml"
+        previous_polygons_found = polygon_count_per_postcode[file_basename]
+        leafname = f"{file_basename}_{previous_polygons_found}.kml"
+        polygon_count_per_postcode[file_basename] += 1
 
         if len(postcodes) > 1:
             json_leafname = file_basename + ".json"
