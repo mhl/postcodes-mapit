@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
 
-# In addition to MapIt's dependencies, you'll need a few other
-# packages for this:
-#
-# pip install numpy matplotlib
-
 import argparse
 from collections import defaultdict
 import csv
