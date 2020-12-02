@@ -10,13 +10,12 @@ from multiprocessing import Pool, cpu_count
 import os
 from os.path import basename, join, splitext
 import re
-import sys
 
 from django.contrib.gis.geos import Point, Polygon
 from django.contrib.gis.gdal import DataSource
 from lxml import etree
-from matplotlib.delaunay import delaunay
 import numpy as np
+from scipy.spatial import Voronoi, voronoi_plot_2d
 from tqdm import tqdm
 
 from mapit.management.command_utils import fix_invalid_geos_geometry
@@ -24,6 +23,30 @@ from mapit.management.command_utils import fix_invalid_geos_geometry
 COLUMN_POSTCODE = "pcds"
 COLUMN_E = "gridgb1e"
 COLUMN_N = "gridgb1n"
+COLUMN_UPRN = "uprn"
+
+# This doesn't need to be in any sense precise - it's used for the centre
+# of our ring of "points at infinity". Taken from:
+# https://www.ordnancesurvey.co.uk/blog/2014/08/where-is-the-centre-of-great-britain-2/
+CENTRE_OF_GB_E = 364188
+CENTRE_OF_GB_N = 456541
+
+UK_MAX_NORTHINGS = 1219109
+UK_MIN_NORTHINGS = 3706
+
+region_code_to_name = {
+    "EE": 'Eastern Euro Region',
+    "EM": 'East Midlands Euro Region',
+    "LN": 'London Euro Region',
+    "NE": 'North East Euro Region',
+    "NW": 'North West Euro Region',
+    "SC": 'Scotland Euro Region',
+    "SE": 'South East Euro Region',
+    "SW": 'South West Euro Region',
+    "WA": 'Wales Euro Region',
+    "WM": 'West Midlands Euro Region',
+    "YH": 'Yorkshire and the Humber Euro Region',
+}
 
 
 def mkdir_p(path):
@@ -80,54 +103,37 @@ def output_boundary_kml(filename, edge, postcodes, polygon):
             kml, pretty_print=True, encoding='utf-8', xml_declaration=True))
 
 
+def polygon_requires_clipping(polygon, region_geometry):
+    geom_type = polygon.geom_type
+    if geom_type == 'MultiPolygon':
+        polygons = polygon.coords
+    elif geom_type == 'Polygon':
+        polygons = [polygon.coords]
+    else:
+        raise Exception("Unknown geom_type {0}".format(geom_type))
+    for p in polygons:
+        for t in p:
+            for x, y in t:
+                point = Point(x, y)
+                if not region_geometry.contains(point):
+                    return True
+    return False
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(
-        description="Generate KML files of the Voronoi diagram of ONSPD postcode centroids")
+        description="Generate KML files of the Voronoi diagram of NSUL postcode coordinates")
     parser.add_argument('-s', '--startswith', metavar='PREFIX',
                         help='Only process postcodes that start with PREFIX')
     parser.add_argument('-p', '--postcode-points', action='store_true',
                         help='Also output a KML file with a Placemark per postcode')
-    parser.add_argument('onspd_csv_filename', metavar='ONSPD-CSV-FILE')
-    parser.add_argument('uk_boundary_filename', metavar='UK-BOUNDARY-KML-FILE')
-    parser.add_argument('output_directory', metavar='OUTPUT-DIRECTORY')
+    parser.add_argument('nsul_csv_filenames', metavar='NSUL-CSV-FILE', nargs='+')
+    parser.add_argument('-r', '--regions-shapefile', metavar='REGIONS-SHAPEFILE')
+    parser.add_argument('-o', '--output_directory', metavar='OUTPUT-DIRECTORY')
 
     args = parser.parse_args()
     required_pc_prefix = args.startswith
-
-    # ------------------------------------------------------------------------
-
-    # Load the boundary of the UK, so that we can restrict the regions at
-    # the edges of the diagram.
-
-    uk_ds = DataSource(args.uk_boundary_filename)
-
-    if len(uk_ds) != 1:
-        raise Exception("Expected the UK border to only have one layer")
-
-    uk_layer = next(iter(uk_ds))
-    uk_geometries = uk_layer.get_geoms(geos=True)
-
-    if len(uk_geometries) != 1:
-        raise Exception("Expected the UK layer to only have one MultiPolygon")
-
-    uk_multipolygon = uk_geometries[0]
-
-    def polygon_requires_clipping(wgs84_polygon):
-        geom_type = wgs84_polygon.geom_type
-        if geom_type == 'MultiPolygon':
-            polygons = wgs84_polygon.coords
-        elif geom_type == 'Polygon':
-            polygons = [wgs84_polygon.coords]
-        else:
-            raise Exception("Unknown geom_type {0}".format(geom_type))
-        for polygon in polygons:
-            for t in polygon:
-                for x, y in t:
-                    point = Point(x, y)
-                    if not uk_multipolygon.contains(point):
-                        return True
-        return False
 
     # ------------------------------------------------------------------------
 
@@ -139,208 +145,200 @@ if __name__ == '__main__':
     # A modified version of one of the regular expressions suggested here:
     #    http://en.wikipedia.org/wiki/Postcodes_in_the_United_Kingdom
 
-    postcode_matcher = re.compile(r'^([A-PR-UWYZ]([0-9][0-9A-HJKPS-UW]?|[A-HK-Y][0-9][0-9ABEHMNPRV-Y]?)) *([0-9][ABD-HJLNP-UW-Z]{2})$')
-
-    # Now load the centroids of (almost) all the postcodes:
-
-    lon_sum = 0
-    lat_sum = 0
-
-    lon_min = sys.maxsize
-    lat_min = sys.maxsize
-
-    lon_max = -sys.maxsize - 1
-    lat_max = -sys.maxsize - 1
-
-    x = []
-    y = []
-
-
-    lon_max_row = None
-    lat_min_row = None
-
-    position_to_postcodes = defaultdict(set)
-    wgs84_postcode_and_points = []
+    postcode_matcher = re.compile(
+        r'^([A-PR-UWYZ]([0-9][0-9A-HJKPS-UW]?|[A-HK-Y][0-9][0-9ABEHMNPRV-Y]?)) *([0-9][ABD-HJLNP-UW-Z]{2})$'
+    )
 
     total_postcodes = 0
 
-    with open(args.onspd_csv_filename) as fp:
-        reader = csv.DictReader(fp)
-        for i, row in enumerate(reader):
-            if i > 0 and (i % 1000 == 0):
-                print("{0} postcodes processed".format(i))
-            pc = row[COLUMN_POSTCODE]
-            if required_pc_prefix and not pc.startswith(required_pc_prefix):
-                continue
-            # Exclude Girobank postcodes:
-            if pc.startswith('GIR'):
-                continue
-            # Exclude rows where the postcode is missing:
-            if not pc:
-                continue
-            m = postcode_matcher.search(pc)
-            if not m:
-                raise Exception("Couldn't parse postcode:" + pc + "from row" + str(row))
-            # Normalize the postcode's format to put a space in the
-            # right place:
-            pc = m.group(1) + " " + m.group(3)
-            # Remove commas from the eastings and northings
-            row[COLUMN_E] = re.sub(r',', '', row[COLUMN_E])
-            row[COLUMN_N] = re.sub(r',', '', row[COLUMN_N])
-            lon = int(re.sub(r',', '', row[COLUMN_E]))
-            lat = int(re.sub(r',', '', row[COLUMN_N]))
-            lon_min = min(lon_min, lon)
-            lat_min = min(lat_min, lat)
-            lon_max = max(lon_max, lon)
-            lat_max = max(lat_max, lat)
-            position_tuple = (lon, lat)
-            position_to_postcodes[position_tuple].add(pc)
-            if len(position_to_postcodes[position_tuple]) == 1:
-                x.append(lon)
-                y.append(lat)
-                lon_sum += lon
-                lat_sum += lat
-            total_postcodes += 1
+    for csv_filename in args.nsul_csv_filenames:
+        print("Processing", csv_filename)
+        m = re.search(r'NSUL_\w+_\d+_(EE|EM|LN|NE|NW|SC|SE|SW|WA|WM|YH).csv', basename(csv_filename))
+        if not m:
+            raise Exception(f"Unexpected format of CSV filename: {basename(csv_filename)} - is this really from NSUL?")
+        region_name = region_code_to_name[m.group(1)]
 
-    if total_postcodes == 0 and required_pc_prefix:
-        print("No postcodes we could process matched '{0}'".format(
-            required_pc_prefix))
-        sys.exit(1)
+        print("Region name is:", region_name)
 
-    centroid_x = lon_sum / float(len(x))
-    centroid_y = lat_sum / float(len(y))
+        # ------------------------------------------------------------------------
+        # Load the corresponding boundary of that region of Great Britain, so we
+        # can clip the postcode regions that cross that boundary.
 
-    # Now add some "points at infinity" - 200 points in a circle way
-    # outside the border of the United Kingdom:
+        regions_ds = DataSource(args.regions_shapefile)
+        if len(regions_ds) != 1:
+            raise Exception("Expected the regions shapefile to only have one layer")
+        regions_layer = next(iter(regions_ds))
 
-    points_at_infinity = 200
+        gb_region_geom = None
+        for feature in regions_layer:
+            if feature.get('NAME') == region_name:
+                gb_region_geom = feature.geom.geos
+        if not gb_region_geom:
+            raise Exception(f"Failed to find the geometry of ‘{region_name}’ in {args.regions_shapefile}")
 
-    distance_to_infinity = (lat_max - lat_min) * 2
+        # Now load the centroids of (almost) all the postcodes in that region:
 
-    first_infinity_point_index = len(x)
+        positions_list = []
+        postcodes_list = []
+        uprn_list = []
 
-    for i in range(0, points_at_infinity):
-        angle = (2 * math.pi * i) / float(points_at_infinity)
-        new_x = centroid_x + math.cos(angle) * distance_to_infinity
-        new_y = centroid_y + math.sin(angle) * distance_to_infinity
-        x.append(new_x)
-        y.append(new_y)
-        # Also add these points to those we might output as KML of each
-        # postcode centroid to help with debugging:
-        osgb_point = Point(new_x, new_y, srid=27700)
-        wgs84_point = osgb_point.transform(4326, clone=True)
-        wgs84_postcode_and_points.append(('infinity{0:06d}'.format(i), wgs84_point))
+        position_to_postcodes = defaultdict(set)
+        positions_seen = set()
+        wgs84_postcode_and_points = []
 
-    if args.postcode_points:
-        output_postcode_points_kml(
-            join(postcodes_output_directory, 'postcode-points.kml'),
-            wgs84_postcode_and_points,
-        )
+        with open(csv_filename) as fp:
+            reader = csv.DictReader(fp)
+            for i, row in enumerate(reader):
+                if i > 0 and (i % 1000 == 0):
+                    print("{0} postcodes processed".format(i))
+                pc = row[COLUMN_POSTCODE]
+                if required_pc_prefix and not pc.startswith(required_pc_prefix):
+                    continue
+                # Exclude Girobank postcodes:
+                if pc.startswith('GIR'):
+                    continue
+                # Exclude rows where the postcode is missing:
+                if not pc:
+                    continue
+                m = postcode_matcher.search(pc)
+                if not m:
+                    raise Exception("Couldn't parse postcode:" + pc + "from row" + str(row))
+                # Normalize the postcode's format to put a space in the
+                # right place:
+                pc = m.group(1) + " " + m.group(3)
+                # Remove commas from the eastings and northings
+                row[COLUMN_E] = re.sub(r',', '', row[COLUMN_E])
+                row[COLUMN_N] = re.sub(r',', '', row[COLUMN_N])
+                lon = int(re.sub(r',', '', row[COLUMN_E]))
+                lat = int(re.sub(r',', '', row[COLUMN_N]))
+                if args.postcode_points:
+                    osgb_point = Point(lon, lat, srid=27700)
+                    wgs84_point = osgb_point.transform(4326, clone=True)
+                    wgs84_postcode_and_points.append((pc, wgs84_point))
+                position_tuple = (lon, lat)
+                postcodes_there = position_to_postcodes[position_tuple]
+                postcodes_there.add(pc)
+                if position_tuple not in positions_seen:
+                    positions_list.append((lon, lat))
+                    postcodes_list.append(postcodes_there)
+                    uprn_list.append(row[COLUMN_UPRN])
+                positions_seen.add(position_tuple)
 
-    x = np.array(x)
-    y = np.array(y)
+        # Now add some "points at infinity" - 200 points in a circle way
+        # outside the border of the United Kingdom:
 
-    print("Calculating the Delaunay Triangulation...")
+        points_at_infinity = 200
 
-    ccs, edges, triangles, neighbours = delaunay(x, y)
+        distance_to_infinity = (UK_MAX_NORTHINGS - UK_MIN_NORTHINGS) * 1.5
 
-    point_to_triangles = [[] for _ in x]
+        first_infinity_point_index = len(positions_list)
 
-    for i, triangle in enumerate(triangles):
-        for point_index in triangle:
-            point_to_triangles[point_index].append(i)
+        for i in range(0, points_at_infinity):
+            angle = (2 * math.pi * i) / float(points_at_infinity)
+            new_x = CENTRE_OF_GB_E + math.cos(angle) * distance_to_infinity
+            new_y = CENTRE_OF_GB_N + math.sin(angle) * distance_to_infinity
+            positions_list.append((new_x, new_y))
+            postcodes_list.append(None)
+            if args.postcode_points:
+                # Also add these points to those we might output as KML of each
+                # postcode centroid to help with debugging:
+                osgb_point = Point(new_x, new_y, srid=27700)
+                wgs84_point = osgb_point.transform(4326, clone=True)
+                wgs84_postcode_and_points.append(('infinity{0:06d}'.format(i), wgs84_point))
 
-    polygon_count_per_postcode = defaultdict(int)
+        if args.postcode_points:
+            output_postcode_points_kml(
+                join(postcodes_output_directory, 'postcode-points.kml'),
+                wgs84_postcode_and_points,
+            )
 
-    # Now generate the KML output:
+        points = np.array(positions_list)
+        print("Calculating the Voronoi diagram...")
+        vor = Voronoi(points)
+        print("Finished!")
 
-    print("Now generating KML output")
+        # Now generate the KML output:
 
-    def output_kml(point_index_and_triangle_indices):
-        point_index, triangle_indices = point_index_and_triangle_indices
+        print("Now generating KML output")
 
-        centre_x = x[point_index]
-        centre_y = y[point_index]
-        position_tuple = centre_x, centre_y
+        def output_kml(point_index):
+            position_tuple = positions_list[point_index]
+            if not postcodes_list[point_index]:
+                return
+            postcodes = sorted(postcodes_list[point_index])
+            voronoi_region_index = vor.point_region[point_index]
+            voronoi_region = vor.regions[voronoi_region_index]
+            if any(vi < 0 for vi in voronoi_region):
+                # Then this region extends to infinity, so is outside our "points at infinity"
+                return
+            centre_x, centre_y = positions_list[point_index]
 
-        if len(triangle_indices) < 3:
-            # Skip any point with fewer than 3 triangle_indices
-            return
+            if len(voronoi_region) < 3:
+                # Skip any point with fewer than 3 triangle_indices
+                return
 
-        if position_tuple in position_to_postcodes:
-            postcodes = sorted(position_to_postcodes[position_tuple])
-            file_basename = postcodes[0]
-            outcode = file_basename.split()[0]
-        else:
-            postcodes = []
-            file_basename = 'point-{0:09d}'.format(point_index)
-            outcode = 'points-at-infinity'
-
-        mkdir_p(join(postcodes_output_directory, outcode))
-
-        previous_polygons_found = polygon_count_per_postcode[file_basename]
-        leafname = f"{file_basename}_{previous_polygons_found}.kml"
-        polygon_count_per_postcode[file_basename] += 1
-
-        if len(postcodes) > 1:
-            json_leafname = file_basename + ".json"
-            with open(join(postcodes_output_directory, outcode, json_leafname), "w") as fp:
-                json.dump(postcodes, fp)
-
-        kml_filename = join(postcodes_output_directory, outcode, leafname)
-
-        if not os.path.exists(kml_filename):
-
-            circumcentres = [ccs[i] for i in triangle_indices]
-
-            def angle_from_centre(p):
-                dx = p[0] - centre_x
-                dy = p[1] - centre_y
-                return math.atan2(dy, dx)
-
-            sccs = np.array(sorted(circumcentres, key=angle_from_centre))
-            xs = [cc[0] for cc in sccs]
-            ys = [cc[1] for cc in sccs]
-
-            border = []
-            for i in range(0, len(sccs) + 1):
-                index_to_use = i
-                if i == len(sccs):
-                    index_to_use = 0
-                cc = (float(xs[index_to_use]),
-                      float(ys[index_to_use]))
-                border.append(cc)
-
-            polygon = Polygon(border, srid=27700)
-            wgs_84_polygon = polygon.transform(4326, clone=True)
-
-            # If the polygon isn't valid after transformation, try to
-            # fix it. (There is one such case.)
-            if not wgs_84_polygon.valid:
-                tqdm.write("Warning: had to fix polygon {0}".format(kml_filename))
-                wgs_84_polygon = fix_invalid_geos_geometry(wgs_84_polygon)
-
-            requires_clipping = polygon_requires_clipping(wgs_84_polygon)
-            if requires_clipping:
-                try:
-                    if wgs_84_polygon.intersects(uk_multipolygon):
-                        clipped_polygon = wgs_84_polygon.intersection(uk_multipolygon)
-                    else:
-                        clipped_polygon = wgs_84_polygon
-                except Exception as e:
-                    tqdm.write("Got exception when generating:", kml_filename)
-                    tqdm.write("The exception was:", e)
-                    tqdm.write("The polygon's KML was:", wgs_84_polygon.kml)
-                    clipped_polygon = wgs_84_polygon
+            if position_tuple in position_to_postcodes:
+                file_basename = postcodes[0]
+                outcode = file_basename.split()[0]
             else:
-                clipped_polygon = wgs_84_polygon
+                postcodes = []
+                file_basename = 'point-{0:09d}'.format(point_index)
+                outcode = 'points-at-infinity'
 
-            output_boundary_kml(kml_filename, requires_clipping, postcodes, clipped_polygon)
+            mkdir_p(join(postcodes_output_directory, outcode))
 
-    pool = Pool(processes=cpu_count())
-    index_and_point_tuples = enumerate(point_to_triangles)
-    for _ in tqdm(
-            pool.imap_unordered(output_kml, index_and_point_tuples),
-            total=len(point_to_triangles),
-            dynamic_ncols=True):
-        pass
+            leafname = f"{file_basename}_{uprn_list[point_index]}.kml"
+
+            if len(postcodes) > 1:
+                json_leafname = file_basename + ".json"
+                with open(join(postcodes_output_directory, outcode, json_leafname), "w") as fp:
+                    json.dump(postcodes, fp)
+
+            kml_filename = join(postcodes_output_directory, outcode, leafname)
+
+            if not os.path.exists(kml_filename):
+
+                border = [vor.vertices[i] for i in voronoi_region]
+                border.append(border[0])
+
+                # The coordinates are NumPy arrays, so convert them to tuples:
+                border = [tuple(p) for p in border]
+
+                polygon = Polygon(border, srid=27700)
+                wgs_84_polygon = polygon.transform(4326, clone=True)
+
+                requires_clipping = polygon_requires_clipping(polygon, gb_region_geom)
+                if requires_clipping:
+                    try:
+                        if polygon.intersects(gb_region_geom):
+                            clipped_polygon = polygon.intersection(gb_region_geom)
+                        else:
+                            clipped_polygon = polygon
+                    except Exception as e:
+                        tqdm.write("Got exception when generating:", kml_filename)
+                        tqdm.write("The exception was:", e)
+                        tqdm.write("The polygon's KML was:", wgs_84_polygon.kml)
+                        clipped_polygon = polygon
+                else:
+                    clipped_polygon = polygon
+
+                wgs_84_clipped_polygon = clipped_polygon.transform(4326, clone=True)
+
+                # If the polygon isn't valid after transformation, try to
+                # fix it. (There has been at least one such case with the old dataset.
+                if not wgs_84_clipped_polygon.valid:
+                    tqdm.write("Warning: had to fix polygon {0}".format(kml_filename))
+                    wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
+
+                output_boundary_kml(kml_filename, requires_clipping, postcodes, wgs_84_clipped_polygon)
+
+        pool = Pool(processes=cpu_count())
+
+        for _ in tqdm(
+                pool.imap_unordered(output_kml, range(len(positions_list))),
+                total=len(positions_list),
+                dynamic_ncols=True):
+            pass
+
+    if len(positions_seen) == 0 and required_pc_prefix:
+        print("No postcodes we could process matched '{0}'".format(required_pc_prefix))
