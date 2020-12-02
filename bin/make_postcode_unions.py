@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 from __future__ import unicode_literals, print_function
 
@@ -21,7 +21,7 @@ def output_boundary_kml(filename, name, geometry):
     name_element.text = name
     placemark = etree.SubElement(folder, 'Placemark')
     placemark.append(etree.fromstring(geometry.kml))
-    with open(filename, 'w') as f:
+    with open(filename, 'wb') as f:
         f.write(etree.tostring(
             kml, pretty_print=True, encoding='utf-8', xml_declaration=True))
 

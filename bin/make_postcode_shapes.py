@@ -46,7 +46,7 @@ def output_postcode_points_kml(filename, postcodes_and_points):
         point = etree.SubElement(placemark, 'Point')
         coordinates = etree.SubElement(point, 'coordinates')
         coordinates.text = '{0.x},{0.y}'.format(wgs84_point)
-    with open(filename, 'w') as f:
+    with open(filename, 'wb') as f:
         f.write(etree.tostring(
             kml, pretty_print=True, encoding='utf-8', xml_declaration=True))
 
