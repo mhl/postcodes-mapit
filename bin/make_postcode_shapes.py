@@ -176,6 +176,9 @@ if __name__ == '__main__':
         if not gb_region_geom:
             raise Exception(f"Failed to find the geometry of ‘{region_name}’ in {args.regions_shapefile}")
 
+        # Clear the previous Voronoi diagram calculation results to help the garbage collector
+        vor = None
+
         # Now load the centroids of (almost) all the postcodes in that region:
 
         positions_list = []
