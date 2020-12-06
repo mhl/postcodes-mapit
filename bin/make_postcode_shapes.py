@@ -192,7 +192,7 @@ if __name__ == '__main__':
         with open(csv_filename) as fp:
             reader = csv.DictReader(fp)
             for i, row in enumerate(reader):
-                if i > 0 and (i % 1000 == 0):
+                if i > 0 and (i % 100000 == 0):
                     print("{0} postcodes processed".format(i))
                 pc = row[COLUMN_POSTCODE]
                 if required_pc_prefix and not pc.startswith(required_pc_prefix):
