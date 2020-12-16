@@ -25,6 +25,8 @@ COLUMN_E = "gridgb1e"
 COLUMN_N = "gridgb1n"
 COLUMN_UPRN = "uprn"
 
+REGION_BATCH_SIZE = 500_000
+
 # This doesn't need to be in any sense precise - it's used for the centre
 # of our ring of "points at infinity". Taken from:
 # https://www.ordnancesurvey.co.uk/blog/2014/08/where-is-the-centre-of-great-britain-2/
@@ -337,11 +339,17 @@ if __name__ == '__main__':
 
         pool = Pool(processes=cpu_count())
 
-        for _ in tqdm(
-                pool.imap_unordered(output_kml, range(len(positions_list))),
-                total=len(positions_list),
-                dynamic_ncols=True):
-            pass
+        # There's some weird memory leak with this combination of tqdm and pool.imap_unordered
+        # so do at most REGION_BATCH_SIZE at a time:
+        total_positions = len(positions_list)
+        for start_index in range(0, total_positions, REGION_BATCH_SIZE):
+            n = min(REGION_BATCH_SIZE, total_positions - start_index)
+            print("Processing batch from index", start_index, "to", (start_index + n - 1, "inclusive"))
+            for _ in tqdm(
+                    pool.imap_unordered(output_kml, range(start_index, start_index + n)),
+                    total=n,
+                    dynamic_ncols=True):
+                pass
 
     if len(positions_seen) == 0 and required_pc_prefix:
         print("No postcodes we could process matched '{0}'".format(required_pc_prefix))
