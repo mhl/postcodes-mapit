@@ -344,7 +344,7 @@ if __name__ == '__main__':
         total_positions = len(positions_list)
         for start_index in range(0, total_positions, REGION_BATCH_SIZE):
             n = min(REGION_BATCH_SIZE, total_positions - start_index)
-            print("Processing batch from index", start_index, "to", (start_index + n - 1, "inclusive"))
+            print("Processing batch from index", start_index, "to", start_index + n - 1, "inclusive")
             for _ in tqdm(
                     pool.imap_unordered(output_kml, range(start_index, start_index + n)),
                     total=n,
