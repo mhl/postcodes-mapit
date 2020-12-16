@@ -15,7 +15,7 @@ from django.contrib.gis.geos import Point, Polygon
 from django.contrib.gis.gdal import DataSource
 from lxml import etree
 import numpy as np
-from scipy.spatial import Voronoi, voronoi_plot_2d
+from scipy.spatial import Voronoi
 from tqdm import tqdm
 
 from mapit.management.command_utils import fix_invalid_geos_geometry
