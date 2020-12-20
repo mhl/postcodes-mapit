@@ -9,6 +9,7 @@ django-storages==1.9.1
 ipython==7.19.0
 lxml==4.6.1
 numpy==1.19.4
+requests==2.25.0
 scipy==1.5.4
 tqdm==4.14.0
 gunicorn==19.7.1
