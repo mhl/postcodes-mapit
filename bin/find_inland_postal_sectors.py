@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+from collections import defaultdict
 import csv
 import json
 from os.path import basename
@@ -17,7 +18,7 @@ MAPIT_BASE_URL = "https://postcodes.mapit.longair.net"
 parser = argparse.ArgumentParser(
     description="Make a list of Scottish postcode sectors that we definitely don't need to clip"
 )
-parser.add_argument("-m", "--mainland-shapefile", metavar="MAINLAND-SHAPEFILE")
+parser.add_argument("-r", "--regions-shapefile", metavar="REGIONS-SHAPEFILE")
 parser.add_argument("-a", "--mapit-areas-csv", metavar="MAPIT-AREA-CSV")
 parser.add_argument("nsul_csv_filenames", metavar="NSUL-CSV-FILE", nargs="+")
 parser.add_argument("-o", "--output_file", metavar="OUTPUT-JSON-FILE")
@@ -25,11 +26,9 @@ parser.add_argument("-o", "--output_file", metavar="OUTPUT-JSON-FILE")
 args = parser.parse_args()
 
 with open(args.mapit_areas_csv) as f:
-    sector_to_mapit_area_id = {
-        row[1]: int(row[0]) for row in csv.reader(f)
-    }
+    sector_to_mapit_area_id = {row[1]: int(row[0]) for row in csv.reader(f)}
 
-sectors_within_mainland_scotland = []
+region_to_sectors_within_mainland = defaultdict(list)
 
 region_code_to_name = {
     "EE": "Eastern Euro Region",
@@ -64,22 +63,23 @@ for csv_filename in args.nsul_csv_filenames:
     region_code = m.group(1)
     region_name = region_code_to_name[region_code]
 
-    if region_code != "SC":
-        print("Skipping", region_name)
-        continue
-
     print("Region name is:", region_name)
 
     # ------------------------------------------------------------------------
-    # Load the corresponding boundary of that region of Great Britain, so we
-    # can clip the postcode regions that cross that boundary.
+    # Load the corresponding boundary of that region of Great Britain. There
+    # are lots of features for Scotland, so we pick the feature with the largest
+    # area.
 
-    mainland_ds = DataSource(args.mainland_shapefile)
-    if len(mainland_ds) != 1:
-        raise Exception("Expected the regions shapefile to only have one layer")
-    mainland_layer = next(iter(mainland_ds))
-
-    mainland_geom = next(iter(mainland_layer)).geom.geos.transform("4326", clone=True)
+    regions_ds = DataSource(args.regions_shapefile)
+    regions_layer = next(iter(regions_ds))
+    mainland_geom = max(
+        (
+            feature.geom.geos.transform("4326", clone=True)
+            for feature in regions_layer
+            if feature.get("NAME") == region_name
+        ),
+        key=lambda g: g.area,
+    )
 
     postcode_sectors_seen = set()
 
@@ -121,9 +121,14 @@ for csv_filename in args.nsul_csv_filenames:
             area_geometry = GEOSGeometry(r.text)
 
             inside = mainland_geom.contains(area_geometry)
-            print("INSIDE" if inside else "OUTSIDE", sector, f"https://postcodes.mapit.longair.net/area/{sector_to_mapit_area_id[sector]}.html")
+            print(
+                f"[{region_code}]:",
+                "INSIDE" if inside else "OUTSIDE",
+                sector,
+                f"https://postcodes.mapit.longair.net/area/{sector_to_mapit_area_id[sector]}.html",
+            )
             if inside:
-                sectors_within_mainland_scotland.append(sector)
+                region_to_sectors_within_mainland[region_code].append(sector)
 
 with open(args.output_file, "w") as f:
-    json.dump(sectors_within_mainland_scotland, f)
+    json.dump(region_to_sectors_within_mainland, f, indent=2)
