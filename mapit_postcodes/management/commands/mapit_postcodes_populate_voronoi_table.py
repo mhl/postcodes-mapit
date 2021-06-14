@@ -47,9 +47,13 @@ class Command(BaseCommand):
         # into a list, storing the corresponding primary key of all the rows
         # that refer to that position.
 
+        rows_processed = 0
         for nsul_row in NSULRow.objects.all().iterator(chunk_size=BATCH_SIZE):
             position_tuple = (int(nsul_row.point.x), int(nsul_row.point.y))
             positions_list.append(position_tuple)
+            rows_processed += 1
+            if (rows_processed % 100000) == 0:
+                print(f"Read {rows_processed} rows from the database")
             if required_pc_prefix and not nsul_row.startswith(required_pc_prefix):
                 continue
             position_to_row_ids[position_tuple].add(nsul_row.id)
