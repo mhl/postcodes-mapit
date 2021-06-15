@@ -8,7 +8,7 @@ class VoronoiRegion(models.Model):
 
 class NSULRow(models.Model):
     point = gis_models.PointField(srid=27700)
-    uprn = models.CharField(max_length=12, unique=True)
+    uprn = models.CharField(max_length=12)
     postcode = models.CharField(max_length=8)
     voronoi_region = models.ForeignKey(
         VoronoiRegion, on_delete=models.CASCADE, null=True

@@ -25,7 +25,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.AutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('point', django.contrib.gis.db.models.fields.PointField(srid=27700)),
-                ('uprn', models.CharField(max_length=12, unique=True)),
+                ('uprn', models.CharField(max_length=12)),
                 ('postcode', models.CharField(max_length=8)),
                 ('region_code', models.CharField(max_length=2)),
                 ('voronoi_region', models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, to='mapit_postcodes.voronoiregion')),
