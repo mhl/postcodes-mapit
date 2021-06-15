@@ -75,13 +75,14 @@ class Command(BaseCommand):
             "-i", "--inland-sectors-file", metavar="INLAND-SECTORS-JSON"
         )
 
-    def polygon_requires_clipping(self, polygon, region_code, postcode):
+    def polygon_requires_clipping(self, polygon, region_codes, postcode):
         if self.inland_sectors_by_region_code is not None:
             # Then in some cases we can skip the expensive later
             # check.
             postcode_sector = postcode_to_sector(postcode)
-            if postcode_sector in self.inland_sectors_by_region_code[region_code]:
-                return False
+            for region_code in region_codes:
+                if postcode_sector in self.inland_sectors_by_region_code[region_code]:
+                    return False
 
         # Check whether any of the points in the polygon or
         # multipolygon are in the sea - if so, we need to clip the
@@ -93,7 +94,7 @@ class Command(BaseCommand):
             polygons = [polygon.coords]
         else:
             raise Exception("Unknown geom_type {0}".format(geom_type))
-        region_geometry = self.region_code_to_geometry[region_code]
+        region_geometry = self.get_regions_geometry(region_codes)
         for p in polygons:
             for t in p:
                 for x, y in t:
@@ -102,10 +103,23 @@ class Command(BaseCommand):
                         return True
         return False
 
-    def clip_unioned(self, polygon, region_code, postcode):
-        if not self.polygon_requires_clipping(polygon, region_code, postcode):
+    def get_regions_geometry(self, region_codes):
+        key = ",".join(sorted(region_codes))
+        cached = self.region_code_to_geometry_cache.get(key)
+        if cached:
+            return cached
+        # Otherwise union those regions' geometries and put them in the cache
+        region_geometries = [self.region_code_to_geometry_cache[rc] for rc in region_codes]
+        unioned = region_geometries[0]
+        for region_geometry in region_geometries[1:]:
+            unioned = unioned.union(region_geometry)
+        self.region_code_to_geometry_cache[key] = unioned
+        return unioned
+
+    def clip_unioned(self, polygon, region_codes, postcode):
+        if not self.polygon_requires_clipping(polygon, region_codes, postcode):
             return polygon
-        gb_region_geom = self.region_code_to_geometry[region_code]
+        gb_region_geom = self.get_regions_geometry(region_codes)
         if not polygon.intersects(gb_region_geom):
             return polygon
         return polygon.intersection(gb_region_geom)
@@ -126,22 +140,17 @@ class Command(BaseCommand):
         postcode_multipolygons = []
         for row in qs:
             postcode = row["postcode"]
-            region_code_rows = (
+            region_codes = list(
                 NSULRow.objects.filter(postcode=postcode)
-                .values("region_code")
+                .values_list("region_code", flat=True)
                 .distinct()
             )
-            if len(region_code_rows) > 1:
-                raise CommandError(
-                    f"The postcode {postcode} lay in multiple regions: {region_code_rows}"
-                )
-            region_code = region_code_rows[0]["region_code"]
             result = VoronoiRegion.objects.filter(nsulrow__postcode=postcode).aggregate(
                 Union("polygon")
             )
             unioned = result["polygon__union"]
 
-            clipped = self.clip_unioned(unioned, region_code, postcode)
+            clipped = self.clip_unioned(unioned, region_codes, postcode)
             wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
             # If the polygon isn't valid after transformation, try to
             # fix it. (There has been at least one such case with the old dataset.
@@ -214,7 +223,7 @@ class Command(BaseCommand):
 
         # Set up a dictionary for caching the coastline geometries for
         # each region:
-        self.region_code_to_geometry = {}
+        self.region_code_to_geometry_cache = {}
         if not options["regions_shapefile"]:
             raise CommandError(
                 "You must supply a regions shapefile with -r or --regions-shapefile"
@@ -228,11 +237,11 @@ class Command(BaseCommand):
         for feature in regions_layer:
             region_name = feature.get("NAME")
             region_code = region_name_to_code[region_name]
-            if region_code in self.region_code_to_geometry:
+            if region_code in self.region_code_to_geometry_cache:
                 raise CommandError(
                     f"There were multiple regions for {region_code} ({region_name}) in the regions shapefile"
                 )
-            self.region_code_to_geometry[region_code] = feature.geom.geos
+            self.region_code_to_geometry_cache[region_code] = feature.geom.geos
 
         # Handle one outcode at a time:
         with connection.cursor() as cursor:
