@@ -7,6 +7,7 @@ import re
 from django.contrib.gis.geos import Point, Polygon
 from django.contrib.gis.gdal import DataSource
 from django.core.management.base import BaseCommand
+from django.db import connection
 from lxml import etree
 import numpy as np
 from scipy.spatial import Voronoi
@@ -121,15 +122,25 @@ class Command(BaseCommand):
                         voronoi_region_object = VoronoiRegion(polygon=polygon)
                         vr_to_create.append(voronoi_region_object)
 
-                        nsul_rows = [NSULRow.objects.get(pk=row_id) for row_id in row_ids]
-                        nr_list.append(nsul_rows)
+                        nr_list.append(row_ids)
 
-                    nr_to_update = []
+                    nr_vr_ids_to_update = []
                     vr_created = VoronoiRegion.objects.bulk_create(vr_to_create)
                     for i, voronoi_region in enumerate(vr_created):
-                        for nsul_row in nr_list[i]:
-                            nsul_row.voronoi_region = voronoi_region
-                            nr_to_update.append(nsul_row)
+                        for nsul_row_id in nr_list[i]:
+                            nr_vr_ids_to_update.append((nsul_row_id, voronoi_region.id))
 
-                    NSULRow.objects.bulk_update(nr_to_update, ["voronoi_region"])
+                    # The update was incredibly slow, so I'm trying the technique here to see if
+                    # it helps https://stackoverflow.com/a/24811058/223092
+                    if len(nr_vr_ids_to_update) > 0:
+                        with connection.cursor() as cursor:
+                            cursor.execute("create temporary table tmp (nsul_row_id integer, voronoi_region_id integer)")
+                            insert_query = "insert into tmp (nsul_row_id, voronoi_region_id) values " + \
+                                ", ".join(f"({nr_id}, {vr_id})" for nr_id, vr_id in nr_vr_ids_to_update)
+                            cursor.execute(insert_query)
+                            cursor.execute("update mapit_postcodes_nsulrow nr set voronoi_region_id = tmp.voronoi_region_id from tmp where nr.id = tmp.nsul_row_id")
+                            # Not strictly necessary since it's a temporary table, but this saves me
+                            # having to figure out the database session lifetime
+                            cursor.execute("drop table tmp")
+
                     progress.update(n)
