@@ -39,6 +39,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, **options):
+        # FIXME: it might be best to drop the index on the postcode column before
+        # and adding it again at the end in a `finally:` block
         required_pc_prefix = options["startswith"]
 
         # We do a Voronoi diagram for each region separately, since doing
