@@ -222,6 +222,8 @@ class Command(BaseCommand):
                 postcode_sectors,
             ) in self.inland_sectors_by_region_code.items():
                 self.inland_sectors_by_region_code[region_code] = set(postcode_sectors)
+        else:
+            print("WARNING: considering specifying --inland-sectors-file to speed this up a lot")
 
         # Set up a dictionary for caching the coastline geometries for
         # each region:
@@ -246,10 +248,12 @@ class Command(BaseCommand):
             self.region_code_to_geometry_cache[region_code] = feature.geom.geos
 
         # Handle one outcode at a time:
+        print("Finding all the outcodes to process...")
         with connection.cursor() as cursor:
             cursor.execute(
                 "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow"
             )
-            for row in cursor.fetchall():
-                outcode = row[0]
+            outcodes = [row[0] for row in cursor.fetchall()]
+            for i, outcode in enumerate(outcodes):
+                print(f"==== Processing {outcode} ({i+1}/{len(outcodes)}")
                 self.process_outcode(outcode, options)
