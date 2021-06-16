@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 
 from django.db import connection
-from django.contrib.gis.db.models import Union
+from django.contrib.gis.db.models import Collect
 from django.contrib.gis.geos import GEOSGeometry, Point
 from django.contrib.gis.gdal import DataSource
 from django.core.management.base import BaseCommand, CommandError
@@ -138,6 +138,8 @@ class Command(BaseCommand):
         if prefix:
             qs = qs.filter(postcode__startswith=prefix)
         qs = qs.order_by("postcode").distinct()
+        postcodes = [row["postcode"] for row in qs]
+
         postcode_multipolygons = []
         for row in qs:
             postcode = row["postcode"]
@@ -148,9 +150,9 @@ class Command(BaseCommand):
                 .distinct()
             )
             result = VoronoiRegion.objects.filter(nsulrow__postcode=postcode).aggregate(
-                Union("polygon")
+                Collect("polygon")
             )
-            unioned = result["polygon__union"]
+            unioned = result["polygon__collect"].unary_union
 
             clipped = self.clip_unioned(unioned, region_codes, postcode)
             wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
