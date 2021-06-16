@@ -131,6 +131,7 @@ class Command(BaseCommand):
         if options["startswith"]:
             prefix = options["startswith"].upper()
         # Deal with individual postcodes first, leaving vertical streets to later:
+        print("Finding postcodes in outcode", outcode)
         qs = NSULRow.objects.values("postcode").filter(
             postcode__startswith=(outcode + " ")
         )
@@ -140,6 +141,7 @@ class Command(BaseCommand):
         postcode_multipolygons = []
         for row in qs:
             postcode = row["postcode"]
+            print("  ", postcode)
             region_codes = list(
                 NSULRow.objects.filter(postcode=postcode)
                 .values_list("region_code", flat=True)
