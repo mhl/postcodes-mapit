@@ -171,35 +171,6 @@ class Command(BaseCommand):
 
         fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
 
-        # Now find all the vertical streets. These are points where there is
-        # more that one different postcode at a single point. (The classic
-        # example of this is the DVLA building in Swansea.)
-        postcode_multipolygons = []
-
-        where_clause = f"where postcode like '{outcode} %'"
-        if prefix:
-            where_clause += f" and postcode like '{prefix}%'"
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "with t as " \
-                + f"(select distinct point, postcode from mapit_postcodes_nsulrow {where_clause}) " \
-                + "select ST_AsText(point), array_agg(postcode order by postcode) from t group by point having count(*) > 1"
-            )
-            for row in cursor.fetchall():
-                point_wkt, postcodes = row
-                point = GEOSGeometry(point_wkt, srid=27700)
-                # Find the corresponding VoronoiRegion for that point:
-                first_matching_row = NSULRow.objects.filter(point=point).first()
-                voronoi_region = first_matching_row.voronoi_region
-                postcode_multipolygons.append((", ".join(postcodes), voronoi_region.polygon.transform(4326, clone=True)))
-
-        output_filename = outcode + "-vertical-streets"
-        if prefix:
-            output_filename += f"-just-{prefix}"
-        output_filename += ".geojson"
-
-        fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
-
     def handle(self, **options):
         # Ensure the output directory exists
         if not options["output_directory"]:
