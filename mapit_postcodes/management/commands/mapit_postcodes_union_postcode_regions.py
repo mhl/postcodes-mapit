@@ -157,7 +157,10 @@ def process_outcode(outcode):
                 wgs_84_clipped_polygon
             )
 
-        postcode_multipolygons.append((postcode, wgs_84_clipped_polygon))
+        if wgs_84_clipped_polygon is None:
+            print(f"The transformed polygon for {postcode} was None")
+        else:
+            postcode_multipolygons.append((postcode, wgs_84_clipped_polygon))
 
     output_filename = outcode
     if postcode_prefix:
