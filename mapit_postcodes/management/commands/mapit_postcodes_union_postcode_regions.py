@@ -215,7 +215,9 @@ class Command(BaseCommand):
             ) in inland_sectors_by_region_code.items():
                 inland_sectors_by_region_code[region_code] = set(postcode_sectors)
         else:
-            print("WARNING: considering specifying --inland-sectors-file to speed this up a lot")
+            print(
+                "WARNING: consider specifying --inland-sectors-file to speed this up a lot"
+            )
 
         # Set up a dictionary for caching the coastline geometries for
         # each region:
