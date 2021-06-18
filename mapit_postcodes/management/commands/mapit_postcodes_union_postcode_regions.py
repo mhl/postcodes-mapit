@@ -170,7 +170,7 @@ def process_outcode(outcode):
 
 
 class Command(BaseCommand):
-    help = "Generate Voronoi polygons from NSUL postcode coordinates"
+    help = "Output postcode polygons based on the Voronoi regions"
 
     def add_arguments(self, parser):
         parser.add_argument(
