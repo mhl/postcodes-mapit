@@ -48,7 +48,9 @@ class Command(BaseCommand):
         # 64GB machine. (This is bad for the very few postcodes that cross
         # EU region boundaries, but I can live with that for the moment.)
 
-        for region_code in NSULRow.objects.values_list("region_code", flat=True).distinct():
+        for region_code in NSULRow.objects.values_list(
+            "region_code", flat=True
+        ).distinct():
             print("===== Processing region", region_code)
 
             positions_list = []
@@ -59,12 +61,16 @@ class Command(BaseCommand):
             # that refer to that position.
 
             rows_processed = 0
-            for nsul_row in NSULRow.objects.filter(region_code=region_code).iterator(chunk_size=BATCH_SIZE):
+            for nsul_row in NSULRow.objects.filter(region_code=region_code).iterator(
+                chunk_size=BATCH_SIZE
+            ):
                 position_tuple = (int(nsul_row.point.x), int(nsul_row.point.y))
                 positions_list.append(position_tuple)
                 rows_processed += 1
                 if (rows_processed % 100000) == 0:
-                    print(f"{region_code}: Read {rows_processed} rows from the database")
+                    print(
+                        f"{region_code}: Read {rows_processed} rows from the database"
+                    )
                 if required_pc_prefix and not nsul_row.startswith(required_pc_prefix):
                     continue
                 position_to_row_ids[position_tuple].add(nsul_row.id)
@@ -136,11 +142,20 @@ class Command(BaseCommand):
                     # it helps https://stackoverflow.com/a/24811058/223092
                     if len(nr_vr_ids_to_update) > 0:
                         with connection.cursor() as cursor:
-                            cursor.execute("create temporary table tmp (nsul_row_id integer, voronoi_region_id integer)")
-                            insert_query = "insert into tmp (nsul_row_id, voronoi_region_id) values " + \
-                                ", ".join(f"({nr_id}, {vr_id})" for nr_id, vr_id in nr_vr_ids_to_update)
+                            cursor.execute(
+                                "create temporary table tmp (nsul_row_id integer, voronoi_region_id integer)"
+                            )
+                            insert_query = (
+                                "insert into tmp (nsul_row_id, voronoi_region_id) values "
+                                + ", ".join(
+                                    f"({nr_id}, {vr_id})"
+                                    for nr_id, vr_id in nr_vr_ids_to_update
+                                )
+                            )
                             cursor.execute(insert_query)
-                            cursor.execute("update mapit_postcodes_nsulrow nr set voronoi_region_id = tmp.voronoi_region_id from tmp where nr.id = tmp.nsul_row_id")
+                            cursor.execute(
+                                "update mapit_postcodes_nsulrow nr set voronoi_region_id = tmp.voronoi_region_id from tmp where nr.id = tmp.nsul_row_id"
+                            )
                             # Not strictly necessary since it's a temporary table, but this saves me
                             # having to figure out the database session lifetime
                             cursor.execute("drop table tmp")

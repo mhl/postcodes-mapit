@@ -224,7 +224,10 @@ class Command(BaseCommand):
                         wgs84_point = osgb_point.transform(4326, clone=True)
                         wgs84_postcode_and_points.append((pc, wgs84_point))
                     position_tuple = (lon, lat)
-                    if position_tuple not in position_to_row_ids and position_tuple not in position_to_row_objects:
+                    if (
+                        position_tuple not in position_to_row_ids
+                        and position_tuple not in position_to_row_objects
+                    ):
                         positions_list.append((lon, lat))
                     position_to_row_objects[position_tuple].append(new_row)
 

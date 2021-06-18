@@ -65,6 +65,7 @@ def get_regions_geometry(region_codes):
     region_code_to_geometry_cache[key] = unioned
     return unioned
 
+
 def polygon_requires_clipping(polygon, region_codes, postcode):
     if inland_sectors_by_region_code is not None:
         # Then in some cases we can skip the expensive later
@@ -113,9 +114,9 @@ def fast_geojson_output(output_filename, postcodes_and_polygons):
             f.write('{"type": "Feature", "geometry": ')
             f.write(polygon.json)
             f.write(f', "properties": {{"postcodes": {json.dumps(postcode)}}}')
-            f.write('}')
+            f.write("}")
             first_item = False
-        f.write(']}')
+        f.write("]}")
 
 
 def process_outcode(outcode):
@@ -126,9 +127,7 @@ def process_outcode(outcode):
     output_directory = postcodes_output_directory / outcode
     mkdir_p(output_directory)
     # Deal with individual postcodes first, leaving vertical streets to later:
-    qs = NSULRow.objects.values("postcode").filter(
-        postcode__startswith=(outcode + " ")
-    )
+    qs = NSULRow.objects.values("postcode").filter(postcode__startswith=(outcode + " "))
     if postcode_prefix:
         qs = qs.filter(postcode__startswith=postcode_prefix)
     qs = qs.order_by("postcode").distinct()
@@ -153,9 +152,7 @@ def process_outcode(outcode):
         # fix it. (There has been at least one such case with the old dataset.
         if not wgs_84_clipped_polygon.valid:
             print(f"Warning: had to fix polygon for postcode {postcode}")
-            wgs_84_clipped_polygon = fix_invalid_geos_geometry(
-                wgs_84_clipped_polygon
-            )
+            wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
 
         if wgs_84_clipped_polygon is None:
             print(f"The transformed polygon for {postcode} was None")
@@ -168,8 +165,6 @@ def process_outcode(outcode):
     output_filename += ".geojson"
 
     fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
-
-
 
 
 class Command(BaseCommand):
@@ -250,7 +245,6 @@ class Command(BaseCommand):
 
         pool = Pool(processes=cpu_count())
         for _ in tqdm(
-            pool.imap_unordered(process_outcode, outcodes),
-            total=len(outcodes)
+            pool.imap_unordered(process_outcode, outcodes), total=len(outcodes)
         ):
             pass
