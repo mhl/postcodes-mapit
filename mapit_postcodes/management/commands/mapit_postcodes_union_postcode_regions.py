@@ -67,7 +67,7 @@ def get_regions_geometry(region_codes):
 
 
 def polygon_requires_clipping(polygon, region_codes, postcode):
-    if inland_sectors_by_region_code is not None:
+    if inland_sectors_by_region_code is not None and postcode is not None:
         # Then in some cases we can skip the expensive later
         # check.
         postcode_sector = postcode_to_sector(postcode)
@@ -95,7 +95,7 @@ def polygon_requires_clipping(polygon, region_codes, postcode):
     return False
 
 
-def clip_unioned(polygon, region_codes, postcode):
+def clip_unioned(polygon, region_codes, postcode=None):
     if not polygon_requires_clipping(polygon, region_codes, postcode):
         return polygon
     gb_region_geom = get_regions_geometry(region_codes)
@@ -108,15 +108,64 @@ def fast_geojson_output(output_filename, postcodes_and_polygons):
     with open(output_filename, "w") as f:
         f.write('{"type": "FeatureCollection", "features": [')
         first_item = True
-        for postcode, polygon in postcodes_and_polygons:
+        for properties, polygon in postcodes_and_polygons:
             if not first_item:
                 f.write(",")
             f.write('{"type": "Feature", "geometry": ')
             f.write(polygon.json)
-            f.write(f', "properties": {{"postcodes": {json.dumps(postcode)}}}')
+            f.write(f', "properties": {json.dumps(properties, sort_keys=True)}')
             f.write("}")
             first_item = False
         f.write("]}")
+
+
+def process_vertical_street(vertical_street_row):
+    # Each forked process has to reopen the database connection, so close it
+    # in each child to force reopening
+    connection.close()
+
+    point_wkt, postcodes, region_codes, uprns, voronoi_region_id = vertical_street_row
+
+    output_directory = postcodes_output_directory / "vertical-streets"
+    mkdir_p(output_directory)
+
+    if postcode_prefix and not any(p.startswith(postcode_prefix) for p in postcodes):
+        return
+
+    point = GEOSGeometry(point_wkt, srid=27700)
+    eastings = int(point.x)
+    northings = int(point.y)
+
+    original_polyon = VoronoiRegion.objects.get(pk=voronoi_region_id).polygon
+
+    clipped = clip_unioned(original_polyon, region_codes)
+    wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
+    # If the polygon isn't valid after transformation, try to
+    # fix it. (There has been at least one such case with the old dataset.
+    if not wgs_84_clipped_polygon.valid:
+        print(f"Warning: had to fix polygon for postcode {postcode}")
+        wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
+
+    if wgs_84_clipped_polygon is None:
+        print(f"The transformed polygon for {postcode} was None")
+    else:
+        postcode_multipolygons = [
+            (
+                {
+                    "postcodes": ", ".join(postcodes),
+                    "uprns": ", ".join(uprns),
+                    "region_codes": ", ".join(region_codes),
+                },
+                wgs_84_clipped_polygon,
+            )
+        ]
+
+    output_filename = f'{eastings},{northings}-{",".join(postcodes)}'
+    if postcode_prefix:
+        output_filename += f"-just-{postcode_prefix}"
+    output_filename += ".geojson"
+
+    fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
 
 
 def process_outcode(outcode):
@@ -157,7 +206,9 @@ def process_outcode(outcode):
         if wgs_84_clipped_polygon is None:
             print(f"The transformed polygon for {postcode} was None")
         else:
-            postcode_multipolygons.append((postcode, wgs_84_clipped_polygon))
+            postcode_multipolygons.append(
+                ({"postcodes": postcode}, wgs_84_clipped_polygon)
+            )
 
     output_filename = outcode
     if postcode_prefix:
@@ -182,6 +233,8 @@ class Command(BaseCommand):
         parser.add_argument(
             "-i", "--inland-sectors-file", metavar="INLAND-SECTORS-JSON"
         )
+        parser.add_argument("--skip-individual-postcodes", action="store_true")
+        parser.add_argument("--skip-vertical-streets", action="store_true")
 
     def handle(self, **options):
         global inland_sectors_by_region_code, region_code_to_geometry_cache, postcodes_output_directory, postcode_prefix
@@ -235,16 +288,41 @@ class Command(BaseCommand):
                 )
             region_code_to_geometry_cache[region_code] = feature.geom.geos
 
-        # Handle one outcode at a time:
-        print("Finding all the outcodes to process...")
-        with connection.cursor() as cursor:
-            cursor.execute(
-                "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow"
-            )
-            outcodes = [row[0] for row in cursor.fetchall()]
+        if not options["skip_individual_postcodes"]:
 
-        pool = Pool(processes=cpu_count())
-        for _ in tqdm(
-            pool.imap_unordered(process_outcode, outcodes), total=len(outcodes)
-        ):
-            pass
+            # Handle one outcode at a time:
+            print("Finding all the outcodes to process...")
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow"
+                )
+                outcodes = [row[0] for row in cursor.fetchall()]
+
+            pool = Pool(processes=cpu_count())
+            for _ in tqdm(
+                pool.imap_unordered(process_outcode, outcodes), total=len(outcodes)
+            ):
+                pass
+
+        if not options["skip_vertical_streets"]:
+            print("Finding all vertical streets from the database....")
+            rows = None
+            with connection.cursor() as cursor:
+                cursor.execute(
+                    "with t as "
+                    + "(select point, "
+                    + "array_agg(distinct postcode order by postcode) as postcodes, "
+                    + "array_agg(distinct region_code order by region_code) as region_codes, "
+                    + "array_agg(uprn order by uprn) as uprns, "
+                    + "voronoi_region_id "
+                    + "from mapit_postcodes_nsulrow group by point, voronoi_region_id) "
+                    + "select ST_AsText(point), postcodes, region_codes, uprns, voronoi_region_id "
+                    + " from t where cardinality(postcodes) > 1"
+                )
+                rows = cursor.fetchall()
+
+            pool = Pool(processes=cpu_count())
+            for _ in tqdm(
+                pool.imap_unordered(process_vertical_street, rows), total=len(rows)
+            ):
+                pass
