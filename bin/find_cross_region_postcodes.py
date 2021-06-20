@@ -88,3 +88,10 @@ cross_region_postcodes.sort()
 
 for postcode, region_codes in cross_region_postcodes:
     print(f"{postcode} => {sorted(region_codes)}")
+
+# Now output just the outcodes that contain cross-region postcodes
+# so I can use that to selectively regenerate just the data that might
+# be affected by a cross-region postcode bug
+cross_region_outcodes = sorted(set(pc.split()[0] for pc, _ in cross_region_postcodes))
+print("Cross region outcodes are:")
+print(cross_region_outcodes)
