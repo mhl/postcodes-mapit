@@ -7,7 +7,7 @@ import re
 
 from django.db import connection
 from django.contrib.gis.db.models import Collect
-from django.contrib.gis.geos import GEOSGeometry, Point
+from django.contrib.gis.geos import GeometryCollection, GEOSGeometry, Point
 from django.contrib.gis.gdal import DataSource
 from django.core.management.base import BaseCommand, CommandError
 
@@ -51,29 +51,19 @@ def postcode_to_sector(postcode):
     return re.sub(r"(^\S+ \S).*", "\\1", postcode)
 
 
-def get_regions_geometry(region_codes):
-    key = ",".join(sorted(region_codes))
-    cached = region_code_to_geometry_cache.get(key)
+def get_region_geometry(region_code):
+    cached = region_code_to_geometry_cache.get(region_code)
     if cached:
         return cached
-    # Otherwise union those regions' geometries and put them in the cache
-    # FIXME: it'd be quicker to collect and then use unuary_union on the result
-    region_geometries = [region_code_to_geometry_cache[rc] for rc in region_codes]
-    unioned = region_geometries[0]
-    for region_geometry in region_geometries[1:]:
-        unioned = unioned.union(region_geometry)
-    region_code_to_geometry_cache[key] = unioned
-    return unioned
+    raise Exception(f"There was no cached geometry for '{region_code}'")
 
-
-def polygon_requires_clipping(polygon, region_codes, postcode):
+def polygon_requires_clipping(polygon, region_code, postcode):
     if inland_sectors_by_region_code is not None and postcode is not None:
         # Then in some cases we can skip the expensive later
         # check.
         postcode_sector = postcode_to_sector(postcode)
-        for region_code in region_codes:
-            if postcode_sector in inland_sectors_by_region_code[region_code]:
-                return False
+        if postcode_sector in inland_sectors_by_region_code[region_code]:
+            return False
 
     # Check whether any of the points in the polygon or
     # multipolygon are in the sea - if so, we need to clip the
@@ -85,7 +75,7 @@ def polygon_requires_clipping(polygon, region_codes, postcode):
         polygons = [polygon.coords]
     else:
         raise Exception("Unknown geom_type {0}".format(geom_type))
-    region_geometry = get_regions_geometry(region_codes)
+    region_geometry = get_region_geometry(region_code)
     for p in polygons:
         for t in p:
             for x, y in t:
@@ -95,10 +85,10 @@ def polygon_requires_clipping(polygon, region_codes, postcode):
     return False
 
 
-def clip_unioned(polygon, region_codes, postcode=None):
-    if not polygon_requires_clipping(polygon, region_codes, postcode):
+def clip_unioned(polygon, region_code, postcode=None):
+    if not polygon_requires_clipping(polygon, region_code, postcode):
         return polygon
-    gb_region_geom = get_regions_geometry(region_codes)
+    gb_region_geom = get_region_geometry(region_code)
     if not polygon.intersects(gb_region_geom):
         return polygon
     return polygon.intersection(gb_region_geom)
@@ -126,6 +116,11 @@ def process_vertical_street(vertical_street_row):
 
     point_wkt, postcodes, region_codes, uprns, voronoi_region_id = vertical_street_row
 
+    if len(region_codes) > 1:
+        print(f"Multiple region codes found (!!!) at {point_wkt}")
+        return
+    region_code = region_codes[0]
+
     output_directory = postcodes_output_directory / "vertical-streets"
     mkdir_p(output_directory)
 
@@ -138,7 +133,7 @@ def process_vertical_street(vertical_street_row):
 
     original_polyon = VoronoiRegion.objects.get(pk=voronoi_region_id).polygon
 
-    clipped = clip_unioned(original_polyon, region_codes)
+    clipped = clip_unioned(original_polyon, region_code)
     wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
     # If the polygon isn't valid after transformation, try to
     # fix it. (There has been at least one such case with the old dataset.
@@ -190,24 +185,38 @@ def process_outcode(outcode):
             .values_list("region_code", flat=True)
             .distinct()
         )
-        result = VoronoiRegion.objects.filter(nsulrow__postcode=postcode).aggregate(
-            Collect("polygon")
-        )
-        unioned = result["polygon__collect"].unary_union
+        result = VoronoiRegion.objects.filter(nsulrow__postcode=postcode) \
+            .values('nsulrow__region_code') \
+            .annotate(collected=Collect("polygon"))
+        union_results = [
+            {
+                "region_code": row["nsulrow__region_code"],
+                "unioned": row["collected"].unary_union,
+            }
+            for row in result
+        ]
 
-        clipped = clip_unioned(unioned, region_codes, postcode)
-        wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
-        # If the polygon isn't valid after transformation, try to
-        # fix it. (There has been at least one such case with the old dataset.
-        if not wgs_84_clipped_polygon.valid:
-            print(f"Warning: had to fix polygon for postcode {postcode}")
-            wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
+        final_polygons_per_region = []
+        for union_result in union_results:
+            region_code = union_result["region_code"]
+            unioned = union_result["unioned"]
+            clipped = clip_unioned(unioned, region_code, postcode)
+            wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
+            # If the polygon isn't valid after transformation, try to
+            # fix it. (There has been at least one such case with the old dataset.
+            if not wgs_84_clipped_polygon.valid:
+                print(f"Warning: had to fix polygon for postcode {postcode}")
+                wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
 
-        if wgs_84_clipped_polygon is None:
-            print(f"The transformed polygon for {postcode} was None")
-        else:
+            if wgs_84_clipped_polygon is None:
+                print(f"The transformed polygon for {postcode} was None")
+            else:
+                final_polygons_per_region.append(wgs_84_clipped_polygon)
+
+        if len(final_polygons_per_region) > 0:
+            gc = GeometryCollection(*final_polygons_per_region)
             postcode_multipolygons.append(
-                ({"postcodes": postcode}, wgs_84_clipped_polygon)
+                ({"postcodes": postcode}, gc.unary_union)
             )
 
     output_filename = outcode
