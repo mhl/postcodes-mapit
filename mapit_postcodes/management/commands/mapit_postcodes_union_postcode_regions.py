@@ -85,13 +85,28 @@ def polygon_requires_clipping(polygon, region_code, postcode):
     return False
 
 
+def drop_non_polygons(geometry_collection):
+    geometries = [
+        geometry for geometry in geometry_collection
+        if geometry.geom_type in ("Polygon", "MultiPolygon")
+    ]
+    return GeometryCollection(*geometries, srid=27700).unary_union
+
 def clip_unioned(polygon, region_code, postcode=None):
     if not polygon_requires_clipping(polygon, region_code, postcode):
         return polygon
     gb_region_geom = get_region_geometry(region_code)
     if not polygon.intersects(gb_region_geom):
         return polygon
-    return polygon.intersection(gb_region_geom)
+    after_intersection = polygon.intersection(gb_region_geom)
+    # There are some rare situations where the intersection produces a
+    # GeometryCollection instead of a Polygon or MultiPolygon because
+    # one element of the intersection is a Point. In that case just drop
+    # any geometries that aren't a Polygon or MultiPolygon.
+    if after_intersection.geom_type == "GeometryCollection":
+        return drop_non_polygons(after_intersection)
+    else:
+        return after_intersection
 
 
 def fast_geojson_output(output_filename, postcodes_and_polygons):
