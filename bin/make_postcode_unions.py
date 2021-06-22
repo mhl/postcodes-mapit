@@ -3,125 +3,104 @@
 from __future__ import unicode_literals, print_function
 
 import argparse
-from collections import defaultdict, namedtuple
-from multiprocessing import Pool, cpu_count
-from os import listdir, makedirs
-from os.path import exists, isdir, join, splitext
+import json
+from pathlib import Path
 import re
 
-from django.contrib.gis.gdal import DataSource
-from lxml import etree
-from tqdm import tqdm
+from django.contrib.gis.geos import GEOSGeometry, GeometryCollection
+
+postcode_re = re.compile(
+    r"(?P<outcode>[A-PR-UWYZ]([0-9][0-9A-HJKPS-UW]?|[A-HK-Y][0-9][0-9ABEHMNPRV-Y]?)) *"
+    + r"((?P<sector>[0-9])(?P<unit>[ABD-HJLNP-UW-Z]{2}))"
+)
 
 
-def output_boundary_kml(filename, name, geometry):
-    kml = etree.Element('kml', nsmap={None: 'http://earth.google.com/kml/2.1'})
-    folder = etree.SubElement(kml, 'Folder')
-    name_element = etree.SubElement(folder, 'name')
-    name_element.text = name
-    placemark = etree.SubElement(folder, 'Placemark')
-    placemark.append(etree.fromstring(geometry.kml))
-    with open(filename, 'wb') as f:
-        f.write(etree.tostring(
-            kml, pretty_print=True, encoding='utf-8', xml_declaration=True))
+def postcode_to_sector(pc):
+    m = postcode_re.search(pc)
+    return m.group("outcode") + " " + m.group("sector")
 
 
-def union_postcode_files(union_task):
-    postcode_part_filename = join(
-        union_task.full_directory,
-        '{0}.kml'.format(union_task.postcode_part))
-    if exists(postcode_part_filename):
-        return
-    # Now load each file and union them all:
-    polygons = [
-        feature.geom
-        for f in union_task.files_to_union
-        for feature in next(iter(DataSource(f)))
-    ]
-    unioned = polygons[0]
-    for polygon in polygons[1:]:
-        unioned = unioned.union(polygon)
-    # And write out that file:
-    output_boundary_kml(
-        postcode_part_filename,
-        union_task.postcode_part,
-        unioned)
+def postcode_to_district(pc):
+    m = postcode_re.search(pc)
+    return m.group("outcode")
 
 
-postcode_re = r'([A-PR-UWYZ]([0-9][0-9A-HJKPS-UW]?|[A-HK-Y][0-9][0-9ABEHMNPRV-Y]?)) *([0-9][ABD-HJLNP-UW-Z]{2})'
-
-# postcode_matcher = re.compile(r'^' + postcode_re + '$')
-postcode_and_suffix_matcher = re.compile(r'^' + postcode_re + r'_([0-9a-zA-Z]+)$')
-
-UnionTask = namedtuple(
-    'UnionTask',
-    ['subdirectory', 'postcode_part', 'files_to_union', 'full_directory'])
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
-        description="Generate KML files of postcode areas, districts and sectors")
-    parser.add_argument('data_directory', metavar='POSTCODE-KML-DIRECTORY')
+        description="Generate KML files of postcode areas, districts and sectors"
+    )
+    parser.add_argument("outcodes_directory", metavar="OUTCODES-DIRECTORY")
 
     args = parser.parse_args()
 
-    postcode_units = defaultdict(set)
-    postcode_areas = defaultdict(set)
-    postcode_districts = defaultdict(set)
-    postcode_sectors = defaultdict(set)
+    outcodes_directory = Path(args.outcodes_directory)
+    outcode_filenames = outcodes_directory.glob("*/*.geojson")
 
-    source_postcode_directory = join(args.data_directory, 'postcodes')
-    sectors_output_directory = join(args.data_directory, 'sectors')
-    districts_output_directory = join(args.data_directory, 'districts')
-    areas_output_directory = join(args.data_directory, 'areas')
-    units_output_directory = join(args.data_directory, 'units')
+    for outcode_filename in sorted(outcode_filenames):
+        outcode = outcode_filename.with_suffix("").name
+        print("===", outcode, "(sectors and districts)")
+        with open(outcode_filename) as f:
+            outcode_data = json.load(f)
+        features = [
+            {
+                "postcode": feature["properties"]["postcodes"],
+                "geos_geometry": GEOSGeometry(json.dumps(feature["geometry"])),
+            }
+            for feature in outcode_data["features"]
+        ]
+        for area_type, area_type_singular, extract_fn in [
+            ("sectors", "sector", postcode_to_sector),
+            ("districts", "district", postcode_to_district),
+        ]:
+            areas_directory = outcodes_directory.parent / area_type
+            distinct_areas = sorted(set(extract_fn(f["postcode"]) for f in features))
+            for area in distinct_areas:
+                gc = GeometryCollection(
+                    *[
+                        f["geos_geometry"]
+                        for f in features
+                        if f["postcode"].startswith(area)
+                    ]
+                )
+                unioned = gc.unary_union
+                areas_outcode_directory = areas_directory / outcode
+                areas_outcode_directory.mkdir(parents=True, exist_ok=True)
+                area_output_filename = areas_outcode_directory / f"{area}.geojson"
+                with open(area_output_filename, "w") as fw:
+                    fw.write('{"type": "FeatureCollection", "features": [')
+                    feature = {
+                        "geometry": json.loads(unioned.json),
+                        "properties": {area_type.rstrip("s"): area},
+                    }
+                    fw.write(json.dumps(feature))
+                    fw.write("]}")
 
-    for e in listdir(source_postcode_directory):
-        district_m = re.search(r'^([A-Z]+)(\d+)([A-Z]+)?$', e)
-        if not district_m:
-            continue
-        area = district_m.group(1)
-        district = e
-        for postcode_file in listdir(join(source_postcode_directory, e)):
-            basename, extension = splitext(postcode_file)
-            if extension != '.kml':
-                continue
-            m = postcode_and_suffix_matcher.search(basename)
-            if not m:
-                continue
-            outward_code = m.group(1)
-            inward_code = m.group(3)
-            unit = outward_code + " " + inward_code
-            sector_letter = inward_code[0]
-            sector = '{district} {sector_letter}'.format(
-                district=district, sector_letter=sector_letter)
-            postcode_relative_filename = join(source_postcode_directory, e, postcode_file)
-            unit_relative_filename = join(units_output_directory, unit + '.kml')
-            sector_relative_filename = join(sectors_output_directory, sector + '.kml')
-            district_relative_filename = join(districts_output_directory, district + '.kml')
-            postcode_units[unit].add(postcode_relative_filename)
-            postcode_sectors[sector].add(unit_relative_filename)
-            postcode_districts[district].add(sector_relative_filename)
-            postcode_areas[area].add(district_relative_filename)
-
-    for subdirectory, mapping in (
-            ('units', postcode_units),
-            ('sectors', postcode_sectors),
-            ('districts', postcode_districts),
-            ('areas', postcode_areas)):
-        tasks = []
-        full_directory = join(args.data_directory, subdirectory)
-        if not isdir(full_directory):
-            makedirs(full_directory)
-        for postcode_part, files_to_union in mapping.items():
-            tasks.append(UnionTask(
-                subdirectory, postcode_part, files_to_union, full_directory))
-
-        print(f"Creating KML files for {subdirectory}")
-        pool = Pool(processes=cpu_count())
-        for _ in tqdm(
-                pool.imap_unordered(union_postcode_files, tasks),
-                total=len(tasks),
-                dynamic_ncols=True):
-            pass
+    outcode_filenames = outcodes_directory.glob("*/*.geojson")
+    outcodes = sorted(
+        outcode_filename.with_suffix("").name for outcode_filename in outcode_filenames
+    )
+    areas = sorted(set(re.sub(r"\d.*", "", outcode) for outcode in outcodes))
+    areas_directory = outcodes_directory.parent / "areas"
+    areas_directory.mkdir(parents=True, exist_ok=True)
+    for area in areas:
+        print("===", area, "(area)")
+        districts_directory = outcodes_directory.parent / "districts"
+        filenames = districts_directory.glob(area + "[0-9]*/*.geojson")
+        geos_geometries = []
+        for filename in filenames:
+            with open(filename) as f:
+                district_data = json.load(f)
+            geos_geometries.append(
+                GEOSGeometry(json.dumps(district_data["features"][0]["geometry"]))
+            )
+        gc = GeometryCollection(*geos_geometries)
+        unioned = gc.unary_union
+        with open(areas_directory / f"{area}.geojson", "w") as fw:
+            fw.write('{"type": "FeatureCollection", "features": [')
+            feature = {
+                "geometry": json.loads(unioned.json),
+                "properties": {"area": area},
+            }
+            fw.write(json.dumps(feature))
+            fw.write("]}")
