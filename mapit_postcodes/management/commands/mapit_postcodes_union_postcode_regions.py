@@ -195,7 +195,7 @@ def process_outcode(outcode):
     # in each child to force reopening
     connection.close()
 
-    output_directory = postcodes_output_directory / outcode
+    output_directory = postcodes_output_directory / "units"
     mkdir_p(output_directory)
     # Deal with individual postcodes first, leaving vertical streets to later:
     qs = NSULRow.objects.values("postcode").filter(postcode__startswith=(outcode + " "))
