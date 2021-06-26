@@ -59,8 +59,10 @@ def get_subpath(level, prefix):
         raise Exception(f"Unknown postcode level “{level}”")
 
 
+SECTOR_RE = r"(^\S+ \S).*"
+
 def postcode_to_sector(postcode):
-    return re.sub(r"(^\S+ \S).*", "\\1", postcode)
+    return re.sub(SECTOR_RE, "\\1", postcode)
 
 
 def get_region_geometry(region_code):
@@ -69,11 +71,12 @@ def get_region_geometry(region_code):
         return cached
     raise Exception(f"There was no cached geometry for '{region_code}'")
 
-def polygon_requires_clipping(polygon, region_code, postcode):
-    if inland_sectors_by_region_code is not None and postcode is not None:
+def polygon_requires_clipping(polygon, region_code, postcode_or_prefix):
+    usable_postcode_or_prefix = postcode_or_prefix and re.search(SECTOR_RE, postcode_or_prefix)
+    if inland_sectors_by_region_code is not None and usable_postcode_or_prefix:
         # Then in some cases we can skip the expensive later
         # check.
-        postcode_sector = postcode_to_sector(postcode)
+        postcode_sector = postcode_to_sector(postcode_or_prefix)
         if postcode_sector in inland_sectors_by_region_code[region_code]:
             return False
 
@@ -104,8 +107,8 @@ def drop_non_polygons(geometry_collection):
     ]
     return GeometryCollection(*geometries, srid=27700).unary_union
 
-def clip_unioned(polygon, region_code, postcode=None):
-    if not polygon_requires_clipping(polygon, region_code, postcode):
+def clip_unioned(polygon, region_code, postcode_or_prefix=None):
+    if not polygon_requires_clipping(polygon, region_code, postcode_or_prefix):
         return polygon
     gb_region_geom = get_region_geometry(region_code)
     if not polygon.intersects(gb_region_geom):
@@ -285,7 +288,7 @@ def process_level(postcode_level, prefix):
     for union_result in union_results:
         region_code = union_result["region_code"]
         unioned = union_result["unioned"]
-        clipped = clip_unioned(unioned, region_code)
+        clipped = clip_unioned(unioned, region_code, prefix)
         wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
         # If the polygon isn't valid after transformation, try to
         # fix it. (There has been at least one such case with the old dataset.
