@@ -1,4 +1,5 @@
 import errno
+from functools import partial
 import json
 from multiprocessing import Pool, cpu_count, set_start_method
 import os
@@ -45,6 +46,17 @@ def mkdir_p(path):
             pass
         else:
             raise
+
+
+def get_subpath(level, prefix):
+    if level == "areas":
+        return Path(f"{prefix}.geojson")
+    elif level == "districts":
+        return Path(f"{prefix}.geojson")
+    elif level == "sectors":
+        return Path(re.sub(' .*', '', prefix)) / f"{prefix}.geojson"
+    else:
+        raise Exception(f"Unknown postcode level “{level}”")
 
 
 def postcode_to_sector(postcode):
@@ -242,6 +254,63 @@ def process_outcode(outcode):
     fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
 
 
+def process_level(postcode_level, prefix):
+    # Each forked process has to reopen the database connection, so close it
+    # in each child to force reopening
+    connection.close()
+
+    outcode_subdir = re.sub(' .*$', '', prefix)
+    output_directory = postcodes_output_directory / postcode_level["plural"]
+    mkdir_p(output_directory)
+    # Deal with individual postcodes first, leaving vertical streets to later:
+    postcode_regex = postcode_level["query_dict_particular_area_re_format"].format(prefix=prefix)
+    qs = NSULRow.objects.values("postcode").filter(postcode__regex=postcode_regex)
+    if postcode_prefix:
+        qs = qs.filter(postcode__startswith=postcode_prefix)
+    qs = qs.order_by("postcode").distinct()
+    postcodes = [row["postcode"] for row in qs]
+
+    result = VoronoiRegion.objects.filter(nsulrow__postcode__in=postcodes) \
+        .values('nsulrow__region_code') \
+        .annotate(collected=Collect("polygon"))
+    union_results = [
+        {
+            "region_code": row["nsulrow__region_code"],
+            "unioned": row["collected"].unary_union,
+        }
+        for row in result
+    ]
+
+    final_polygons_per_region = []
+    for union_result in union_results:
+        region_code = union_result["region_code"]
+        unioned = union_result["unioned"]
+        clipped = clip_unioned(unioned, region_code)
+        wgs_84_clipped_polygon = clipped.transform(4326, clone=True)
+        # If the polygon isn't valid after transformation, try to
+        # fix it. (There has been at least one such case with the old dataset.
+        if not wgs_84_clipped_polygon.valid:
+            print(f"Warning: had to fix polygon for postcode {postcode}")
+            wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
+
+        if wgs_84_clipped_polygon is None:
+            print(f"The transformed polygon for {postcode} was None")
+        else:
+            final_polygons_per_region.append(wgs_84_clipped_polygon)
+
+    final_multipolygons = []
+    if len(final_polygons_per_region) > 0:
+        gc = GeometryCollection(*final_polygons_per_region)
+        final_multipolygons.append(
+            ({postcode_level["singular"]: prefix}, gc.unary_union)
+        )
+
+    output_filename = output_directory / get_subpath(postcode_level["plural"], prefix)
+    output_filename.parent.mkdir(parents=True, exist_ok=True)
+
+    fast_geojson_output(output_filename, final_multipolygons)
+
+
 class Command(BaseCommand):
     help = "Output postcode polygons based on the Voronoi regions"
 
@@ -258,6 +327,7 @@ class Command(BaseCommand):
             "-i", "--inland-sectors-file", metavar="INLAND-SECTORS-JSON"
         )
         parser.add_argument("--skip-individual-postcodes", action="store_true")
+        parser.add_argument("--skip-higher-level-areas", action="store_true")
         parser.add_argument("--skip-vertical-streets", action="store_true")
 
     def handle(self, **options):
@@ -327,6 +397,41 @@ class Command(BaseCommand):
                 pool.imap_unordered(process_outcode, outcodes), total=len(outcodes)
             ):
                 pass
+            connection.close()
+
+        if not options["skip_higher_level_areas"]:
+            for postcode_level in [
+                {
+                        "singular": "area",
+                        "plural": "areas",
+                        "query_all_areas": "select distinct regexp_replace(postcode, '^([A-Z]+).*', '\\1') from mapit_postcodes_nsulrow",
+                        "query_dict_particular_area_re_format": "^{prefix}[0-9]",
+                },
+                {
+                        "singular": "district",
+                        "plural": "districts",
+                        "query_all_areas": "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow",
+                        "query_dict_particular_area_re_format": "^{prefix} ",
+                },
+                {
+                        "singular": "sector",
+                        "plural": "sectors",
+                        "query_all_areas": "select distinct regexp_replace(postcode, '^(.* [0-9]).*', '\\1') from mapit_postcodes_nsulrow",
+                        "query_dict_particular_area_re_format": "^{prefix}",
+                }
+            ]:
+                print(f"======== Generating {postcode_level['plural']}")
+                with connection.cursor() as cursor:
+                    cursor.execute(postcode_level["query_all_areas"])
+                    prefixes = [row[0] for row in cursor.fetchall()]
+                print("++++ Example prefixes:", str(prefixes)[:64])
+                specialized_process_function = partial(process_level, postcode_level)
+                pool = Pool(processes=cpu_count())
+                for _ in tqdm(
+                    pool.imap_unordered(specialized_process_function, prefixes), total=len(prefixes)
+                ):
+                    pass
+                connection.close()
 
         if not options["skip_vertical_streets"]:
             print("Finding all vertical streets from the database....")
@@ -350,3 +455,4 @@ class Command(BaseCommand):
                 pool.imap_unordered(process_vertical_street, rows), total=len(rows)
             ):
                 pass
+            connection.close()
