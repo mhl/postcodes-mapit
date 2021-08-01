@@ -56,12 +56,13 @@ def get_subpath(level, prefix):
     elif level == "districts":
         return Path(f"{prefix}.geojson")
     elif level == "sectors":
-        return Path(re.sub(' .*', '', prefix)) / f"{prefix}.geojson"
+        return Path(re.sub(" .*", "", prefix)) / f"{prefix}.geojson"
     else:
         raise Exception(f"Unknown postcode level “{level}”")
 
 
 SECTOR_RE = r"(^\S+ \S).*"
+
 
 def postcode_to_sector(postcode):
     return re.sub(SECTOR_RE, "\\1", postcode)
@@ -73,8 +74,11 @@ def get_region_geometry(region_code):
         return cached
     raise Exception(f"There was no cached geometry for '{region_code}'")
 
+
 def polygon_requires_clipping(polygon, region_code, postcode_or_prefix):
-    usable_postcode_or_prefix = postcode_or_prefix and re.search(SECTOR_RE, postcode_or_prefix)
+    usable_postcode_or_prefix = postcode_or_prefix and re.search(
+        SECTOR_RE, postcode_or_prefix
+    )
     if inland_sectors_by_region_code is not None and usable_postcode_or_prefix:
         # Then in some cases we can skip the expensive later
         # check.
@@ -104,10 +108,12 @@ def polygon_requires_clipping(polygon, region_code, postcode_or_prefix):
 
 def drop_non_polygons(geometry_collection):
     geometries = [
-        geometry for geometry in geometry_collection
+        geometry
+        for geometry in geometry_collection
         if geometry.geom_type in ("Polygon", "MultiPolygon")
     ]
     return GeometryCollection(*geometries, srid=27700).unary_union
+
 
 def clip_unioned(polygon, region_code, postcode_or_prefix=None):
     if not polygon_requires_clipping(polygon, region_code, postcode_or_prefix):
@@ -217,9 +223,11 @@ def process_outcode(outcode):
             .values_list("region_code", flat=True)
             .distinct()
         )
-        result = VoronoiRegion.objects.filter(nsulrow__postcode=postcode) \
-            .values('nsulrow__region_code') \
+        result = (
+            VoronoiRegion.objects.filter(nsulrow__postcode=postcode)
+            .values("nsulrow__region_code")
             .annotate(collected=Collect("polygon"))
+        )
         union_results = [
             {
                 "region_code": row["nsulrow__region_code"],
@@ -238,7 +246,9 @@ def process_outcode(outcode):
             # fix it. (There has been at least one such case with the old dataset.
             if not wgs_84_clipped_polygon.valid:
                 print(f"Warning: had to fix polygon for postcode {postcode}")
-                wgs_84_clipped_polygon = fix_invalid_geos_geometry(wgs_84_clipped_polygon)
+                wgs_84_clipped_polygon = fix_invalid_geos_geometry(
+                    wgs_84_clipped_polygon
+                )
 
             if wgs_84_clipped_polygon is None:
                 print(f"The transformed polygon for {postcode} was None")
@@ -270,20 +280,24 @@ def process_level(postcode_level, prefix):
     # in each child to force reopening
     connection.close()
 
-    outcode_subdir = re.sub(' .*$', '', prefix)
+    outcode_subdir = re.sub(" .*$", "", prefix)
     output_directory = postcodes_output_directory / postcode_level["plural"]
     mkdir_p(output_directory)
     # Deal with individual postcodes first, leaving vertical streets to later:
-    postcode_regex = postcode_level["query_dict_particular_area_re_format"].format(prefix=prefix)
+    postcode_regex = postcode_level["query_dict_particular_area_re_format"].format(
+        prefix=prefix
+    )
     qs = NSULRow.objects.values("postcode").filter(postcode__regex=postcode_regex)
     if postcode_prefix:
         qs = qs.filter(postcode__startswith=postcode_prefix)
     qs = qs.order_by("postcode").distinct()
     postcodes = [row["postcode"] for row in qs]
 
-    result = VoronoiRegion.objects.filter(nsulrow__postcode__in=postcodes) \
-        .values('nsulrow__region_code') \
+    result = (
+        VoronoiRegion.objects.filter(nsulrow__postcode__in=postcodes)
+        .values("nsulrow__region_code")
         .annotate(collected=Collect("polygon"))
+    )
     union_results = [
         {
             "region_code": row["nsulrow__region_code"],
@@ -419,23 +433,23 @@ class Command(BaseCommand):
         if not options["skip_higher_level_areas"]:
             for postcode_level in [
                 {
-                        "singular": "area",
-                        "plural": "areas",
-                        "query_all_areas": "select distinct regexp_replace(postcode, '^([A-Z]+).*', '\\1') from mapit_postcodes_nsulrow",
-                        "query_dict_particular_area_re_format": "^{prefix}[0-9]",
+                    "singular": "area",
+                    "plural": "areas",
+                    "query_all_areas": "select distinct regexp_replace(postcode, '^([A-Z]+).*', '\\1') from mapit_postcodes_nsulrow",
+                    "query_dict_particular_area_re_format": "^{prefix}[0-9]",
                 },
                 {
-                        "singular": "district",
-                        "plural": "districts",
-                        "query_all_areas": "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow",
-                        "query_dict_particular_area_re_format": "^{prefix} ",
+                    "singular": "district",
+                    "plural": "districts",
+                    "query_all_areas": "select distinct regexp_replace(postcode, ' .*', '') from mapit_postcodes_nsulrow",
+                    "query_dict_particular_area_re_format": "^{prefix} ",
                 },
                 {
-                        "singular": "sector",
-                        "plural": "sectors",
-                        "query_all_areas": "select distinct regexp_replace(postcode, '^(.* [0-9]).*', '\\1') from mapit_postcodes_nsulrow",
-                        "query_dict_particular_area_re_format": "^{prefix}",
-                }
+                    "singular": "sector",
+                    "plural": "sectors",
+                    "query_all_areas": "select distinct regexp_replace(postcode, '^(.* [0-9]).*', '\\1') from mapit_postcodes_nsulrow",
+                    "query_dict_particular_area_re_format": "^{prefix}",
+                },
             ]:
                 print(f"======== Generating {postcode_level['plural']}")
                 with connection.cursor() as cursor:
@@ -445,7 +459,8 @@ class Command(BaseCommand):
                 specialized_process_function = partial(process_level, postcode_level)
                 pool = Pool(processes=cpu_count())
                 for _ in tqdm(
-                    pool.imap_unordered(specialized_process_function, prefixes), total=len(prefixes)
+                    pool.imap_unordered(specialized_process_function, prefixes),
+                    total=len(prefixes),
                 ):
                     pass
                 connection.close()
