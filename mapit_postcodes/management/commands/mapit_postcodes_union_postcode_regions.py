@@ -37,6 +37,8 @@ region_code_to_geometry_cache = {}
 postcodes_output_directory = None
 postcode_prefix = None
 
+MAPIT_CODE_KEY = "mapit_code"
+
 
 def mkdir_p(path):
     try:
@@ -246,7 +248,13 @@ def process_outcode(outcode):
         if len(final_polygons_per_region) > 0:
             gc = GeometryCollection(*final_polygons_per_region)
             postcode_multipolygons.append(
-                ({"postcodes": postcode}, gc.unary_union)
+                (
+                    {
+                        "postcodes": postcode,
+                        MAPIT_CODE_KEY: re.sub(r"\s+", "", postcode),
+                    },
+                    gc.unary_union,
+                )
             )
 
     output_filename = outcode
@@ -305,7 +313,13 @@ def process_level(postcode_level, prefix):
     if len(final_polygons_per_region) > 0:
         gc = GeometryCollection(*final_polygons_per_region)
         final_multipolygons.append(
-            ({postcode_level["singular"]: prefix}, gc.unary_union)
+            (
+                {
+                    postcode_level["singular"]: prefix,
+                    MAPIT_CODE_KEY: re.sub(r"\s+", "", prefix),
+                },
+                gc.unary_union,
+            )
         )
 
     output_filename = output_directory / get_subpath(postcode_level["plural"], prefix)
