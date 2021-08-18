@@ -45,7 +45,6 @@ pathspec==0.8.1
 pep517==0.8.2
 pexpect==4.8.0
 pickleshare==0.7.5
-pkg-resources==0.0.0
 progress==1.5
 prompt-toolkit==3.0.8
 psycopg2==2.8.6
