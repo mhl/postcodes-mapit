@@ -17,6 +17,12 @@ instead.
 How to generate the data
 ------------------------
 
+If you just want the data yourself, there's no need to follow these
+instructions - you can
+[download it](https://postcodes-mapit-static.s3.eu-west-2.amazonaws.com/data/gb-postcodes-v4.tar.bz2).
+instead. If for some reason you really want to regenerate i yourself,
+read on.
+
 Create a virtualenv for this project, change into the cloned
 repository directory and run `pip install -r requirements.txt`
 to install the Python package dependencies.
