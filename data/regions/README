@@ -1,0 +1,9 @@
+This shapefile is generated from the October 2020 release of the
+Ordnance Survey's Boundary-Line product. It's the
+european_region_region.shp shapfile, but with Scotland as a single
+multipolygon instead of a feature per polygon.
+
+The source data was released under the Open Government License v3
+http://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/
+
+Contains OS data © Crown copyright and database right 2021
