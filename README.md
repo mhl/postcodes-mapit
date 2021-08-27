@@ -7,7 +7,7 @@ UPRNs with postcodes in NSUL.
 
 For more information see the blog post here:
 
-*   https://longair.net/blog/2021/08/20/open-data-gb-postcode-unit-boundaries
+* https://longair.net/blog/2021/08/23/open-data-gb-postcode-unit-boundaries
 
 If you're looking to create a MapIt in your country, work on any
 of the underlying code, or re-use it as an app in another Django

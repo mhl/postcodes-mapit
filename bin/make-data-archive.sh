@@ -34,7 +34,7 @@ This archive contains approximate boundaries for postcodes in Great
 Britain. For more information about how this data generated, see the blog
 post here:
 
-  https://longair.net/blog/2021/08/20/open-data-gb-postcode-unit-boundaries
+  https://longair.net/blog/2021/08/23/open-data-gb-postcode-unit-boundaries
 
 This archive contains GeoJSON files for postcode areas, districts,
 sectors and units. (The postcode unit boundaries are collected into
