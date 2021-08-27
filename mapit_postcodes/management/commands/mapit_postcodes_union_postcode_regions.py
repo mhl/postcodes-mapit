@@ -35,7 +35,7 @@ region_name_to_code = {v: k for k, v in region_code_to_name.items()}
 inland_sectors_by_region_code = None
 region_code_to_geometry_cache = {}
 postcodes_output_directory = None
-postcode_prefix = None
+only_single_area = None
 
 MAPIT_CODE_KEY = "mapit_code"
 
@@ -162,9 +162,6 @@ def process_vertical_street(vertical_street_row):
     output_directory = postcodes_output_directory / "vertical-streets"
     mkdir_p(output_directory)
 
-    if postcode_prefix and not any(p.startswith(postcode_prefix) for p in postcodes):
-        return
-
     point = GEOSGeometry(point_wkt, srid=27700)
     eastings = int(point.x)
     northings = int(point.y)
@@ -193,10 +190,7 @@ def process_vertical_street(vertical_street_row):
             )
         ]
 
-    output_filename = f'{eastings},{northings}-{",".join(postcodes)}'
-    if postcode_prefix:
-        output_filename += f"-just-{postcode_prefix}"
-    output_filename += ".geojson"
+    output_filename = f'{eastings},{northings}-{",".join(postcodes)}.geojson'
 
     fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
 
@@ -210,8 +204,6 @@ def process_outcode(outcode):
     mkdir_p(output_directory)
     # Deal with individual postcodes first, leaving vertical streets to later:
     qs = NSULRow.objects.values("postcode").filter(postcode__startswith=(outcode + " "))
-    if postcode_prefix:
-        qs = qs.filter(postcode__startswith=postcode_prefix)
     qs = qs.order_by("postcode").distinct()
     postcodes = [row["postcode"] for row in qs]
 
@@ -267,10 +259,7 @@ def process_outcode(outcode):
                 )
             )
 
-    output_filename = outcode
-    if postcode_prefix:
-        output_filename += f"-just-{postcode_prefix}"
-    output_filename += ".geojson"
+    output_filename = outcode + ".geojson"
 
     fast_geojson_output(output_directory / output_filename, postcode_multipolygons)
 
@@ -347,10 +336,10 @@ class Command(BaseCommand):
 
     def add_arguments(self, parser):
         parser.add_argument(
-            "-s",
-            "--startswith",
-            metavar="PREFIX",
-            help="Only process postcodes that start with PREFIX",
+            "-a",
+            "--area",
+            metavar="AREA",
+            help="Only generate output for postcodes in the postcode area AREA",
         )
         parser.add_argument("-r", "--regions-shapefile", metavar="REGIONS-SHAPEFILE")
         parser.add_argument("-o", "--output-directory", metavar="OUTPUT-DIRECTORY")
@@ -363,9 +352,6 @@ class Command(BaseCommand):
 
     def handle(self, **options):
         global inland_sectors_by_region_code, region_code_to_geometry_cache, postcodes_output_directory, postcode_prefix
-
-        if options["startswith"]:
-            postcode_prefix = options["startswith"].upper()
 
         # Ensure the output directory exists
         if not options["output_directory"]:
@@ -423,6 +409,14 @@ class Command(BaseCommand):
                 )
                 outcodes = [row[0] for row in cursor.fetchall()]
 
+            if options["area"]:
+                only_single_area = options["area"].upper()
+                outcodes = [o for o in outcodes if o.startswith(only_single_area)]
+                if not outcodes:
+                    raise CommandError(
+                        f"You said to only process the area {only_single_area} but no outcodes were found for that area"
+                    )
+
             pool = Pool(processes=cpu_count())
             for _ in tqdm(
                 pool.imap_unordered(process_outcode, outcodes), total=len(outcodes)
@@ -455,6 +449,12 @@ class Command(BaseCommand):
                 with connection.cursor() as cursor:
                     cursor.execute(postcode_level["query_all_areas"])
                     prefixes = [row[0] for row in cursor.fetchall()]
+                if options["area"]:
+                    prefixes = [p for p in prefixes if p.startswith(only_single_area)]
+                    if not prefixes:
+                        raise CommandError(
+                            f"You said to only process the area {only_single_area} but no {postcode_level['plural']} were found for that area"
+                        )
                 print("++++ Example prefixes:", str(prefixes)[:64])
                 specialized_process_function = partial(process_level, postcode_level)
                 pool = Pool(processes=cpu_count())
@@ -469,6 +469,9 @@ class Command(BaseCommand):
             print("Finding all vertical streets from the database....")
             rows = None
             with connection.cursor() as cursor:
+                area_restriction = ""
+                if only_single_area:
+                    area_restriction = " where postcode like %(area_like_condition)s"
                 cursor.execute(
                     "with t as "
                     + "(select point, "
@@ -476,9 +479,14 @@ class Command(BaseCommand):
                     + "array_agg(distinct region_code order by region_code) as region_codes, "
                     + "array_agg(uprn order by uprn) as uprns, "
                     + "voronoi_region_id "
-                    + "from mapit_postcodes_nsulrow group by point, voronoi_region_id) "
+                    + f"from mapit_postcodes_nsulrow{area_restriction} group by point, voronoi_region_id) "
                     + "select ST_AsText(point), postcodes, region_codes, uprns, voronoi_region_id "
-                    + " from t where cardinality(postcodes) > 1"
+                    + " from t where cardinality(postcodes) > 1",
+                    {
+                        "area_like_condition": f"{only_single_area}%"
+                        if only_single_area
+                        else ""
+                    },
                 )
                 rows = cursor.fetchall()
 
