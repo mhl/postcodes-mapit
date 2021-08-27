@@ -1,4 +1,6 @@
-#!/bin/sh
+#!/bin/bash
+
+REPO_DIRECTORY="$(cd "$(dirname "$BASH_SOURCE")"/.. && pwd -P)"
 
 if [ "$#" != 1 ]
 then
@@ -61,6 +63,8 @@ postcode boundaries due to limitations of the open address data currently
 available. In other words, there are no guarantees about the quality of
 this data or its suitability for any use; use it at your own risk.
 EOF
+
+cp "$REPO_DIRECTORY"/CHANGELOG.md $D/
 
 # Now tar it up:
 D_WITHOUT_SLASH="${D%/}"
