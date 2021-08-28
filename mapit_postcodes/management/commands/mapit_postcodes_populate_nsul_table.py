@@ -44,6 +44,7 @@ region_code_to_name = {
     "YH": "Yorkshire and the Humber Euro Region",
 }
 
+terminated_postcodes = set()
 
 def output_postcode_points_kml(filename, postcodes_and_points):
     kml = etree.Element("kml", nsmap={None: "http://earth.google.com/kml/2.1"})
@@ -87,6 +88,7 @@ class Command(BaseCommand):
             action="store_true",
             help="Delete all NSULRow and VoronoiRegion objects before repopulating",
         )
+        parser.add_argument("-n", "--onspd", metavar="ONSPD-CSV")
 
     def handle(self, **options):
         # FIXME: it might be best to drop the index on the postcode column before
@@ -112,6 +114,13 @@ class Command(BaseCommand):
                 return
 
         required_pc_prefix = options["startswith"]
+
+        if options["onspd"]:
+            with open(options["onspd"]) as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    if row["doterm"]:
+                        terminated_postcodes.add(row["pcds"])
 
         # ------------------------------------------------------------------------
 
@@ -206,6 +215,9 @@ class Command(BaseCommand):
                     # Normalize the postcode's format to put a space in the
                     # right place:
                     pc = m.group(1) + " " + m.group(3)
+                    # Exclude any terminated postcodes:
+                    if pc in terminated_postcodes:
+                        continue
                     # Remove commas from the eastings and northings
                     row[COLUMN_E] = re.sub(r",", "", row[COLUMN_E])
                     row[COLUMN_N] = re.sub(r",", "", row[COLUMN_N])
