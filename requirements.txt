@@ -65,7 +65,7 @@ scipy==1.5.4
 Shapely==1.7.1
 simplegeneric==0.8.1
 six==1.14.0
-sqlparse==0.4.1
+sqlparse==0.4.2
 toml==0.10.2
 tqdm==4.61.1
 traitlets==5.0.5
