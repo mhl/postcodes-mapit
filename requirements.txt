@@ -38,7 +38,7 @@ matplotlib==2.0.2
 mccabe==0.6.1
 msgpack==0.6.2
 mypy-extensions==0.4.3
-numpy==1.19.4
+numpy==1.22.0
 packaging==20.3
 parso==0.7.1
 pathspec==0.8.1
