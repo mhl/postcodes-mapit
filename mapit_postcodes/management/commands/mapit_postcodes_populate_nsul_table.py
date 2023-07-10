@@ -14,10 +14,10 @@ from tqdm import tqdm
 
 from mapit_postcodes.models import VoronoiRegion, NSULRow
 
-COLUMN_POSTCODE = "pcds"
-COLUMN_E = "gridgb1e"
-COLUMN_N = "gridgb1n"
-COLUMN_UPRN = "uprn"
+COLUMN_POSTCODE = "PCDS"
+COLUMN_E = "GRIDGB1E"
+COLUMN_N = "GRIDGB1N"
+COLUMN_UPRN = "UPRN"
 
 BATCH_SIZE = 1000
 
@@ -189,7 +189,7 @@ class Command(BaseCommand):
                         print("{0} postcodes processed".format(i))
                     if i > 0 and (i % BATCH_SIZE == 0):
                         bulk_create_batch_of_new_row_objects()
-                    pc = row[COLUMN_POSTCODE]
+                    pc = row[COLUMN_POSTCODE].strip()
                     if required_pc_prefix and not pc.startswith(required_pc_prefix):
                         continue
                     # Exclude Girobank postcodes:
