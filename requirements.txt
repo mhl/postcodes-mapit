@@ -22,7 +22,7 @@ django-mapit==3.0
 django-storages==1.9.1
 docutils==0.15.2
 flake8==3.9.2
-gunicorn==19.7.1
+gunicorn==22.0.0
 html5lib==1.0.1
 idna==2.8
 ipaddr==2.2.0
